@@ -1,6 +1,6 @@
 """
-Gradio Web UI for YOLO26 Drone Detection.
-Supports image and video upload with adjustable confidence threshold.
+DroneAI — Gradio Web UI for YOLO26 aerial object detection.
+Supports image upload, video upload, and live camera feed.
 
 Usage:
     uv run main.py
@@ -146,25 +146,66 @@ def detect_video(video_path: str, confidence: float, progress=gr.Progress()) -> 
 
     return tmp_out.name, summary
 
+# ── Live camera detection (native OpenCV — zero HTTP overhead) ────────────────
+import threading
+
+_live_stop = threading.Event()
+
+
+def run_live_camera(conf: float = 0.25):
+    """Open a native OpenCV window with real-time YOLO detection."""
+    import torch
+
+    _live_stop.clear()
+
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return "❌ Could not open camera."
+
+    use_half = torch.cuda.is_available()
+    print(f"📷  Live detection started (device: {'CUDA' if use_half else 'CPU'}).")
+
+    try:
+        while not _live_stop.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = model.predict(frame, conf=conf, imgsz=320, half=use_half, verbose=False)
+            annotated, _ = draw_boxes(frame, results)
+            cv2.imshow("DroneAI – Live Detection (press 'q' to quit)", annotated)
+
+            if cv2.waitKey(10) & 0xFF == ord("q"):
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        print("📷  Live detection stopped.")
+
+    return "✅ Camera stopped."
+
+
+def stop_live_camera():
+    """Signal the live camera loop to stop."""
+    _live_stop.set()
+    return "⏹️ Stopping camera..."
+
 
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
 def build_app() -> gr.Blocks:
     class_list = ", ".join(CLASS_NAMES.values())
 
-    with gr.Blocks(
-        title="DroneAI – YOLO26 Detection",
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="cyan",
-        ),
-    ) as app:
+    with gr.Blocks(title="DroneAI – YOLO26 Detection") as app:
         gr.Markdown(
-            "# 🛩️ DroneAI – YOLO26 Object Detection\n"
+            "# 🛩️ DroneAI\n"
+            "Aerial object detection powered by **YOLO26**\n\n"
             f"**Model:** `{MODEL_PATH.name}` &nbsp;|&nbsp; "
-            f"**Classes ({len(CLASS_NAMES)}):** {class_list}"
+            f"**{len(CLASS_NAMES)} classes:** {class_list}"
         )
 
-        with gr.Tab("🖼️ Image Detection"):
+        with gr.Tab("🖼️ Image"):
             with gr.Row():
                 with gr.Column():
                     img_input = gr.Image(label="Upload Image", type="numpy")
@@ -183,7 +224,7 @@ def build_app() -> gr.Blocks:
                 outputs=[img_output, img_summary],
             )
 
-        with gr.Tab("🎬 Video Detection"):
+        with gr.Tab("🎬 Video"):
             with gr.Row():
                 with gr.Column():
                     vid_input = gr.Video(label="Upload Video")
@@ -202,9 +243,27 @@ def build_app() -> gr.Blocks:
                 outputs=[vid_output, vid_summary],
             )
 
+        with gr.Tab("📷 Live"):
+            gr.Markdown(
+                "Opens a native camera window for **real-time detection**.\n\n"
+                "Press **'q'** in the camera window or click **Stop** below to close."
+            )
+            live_conf = gr.Slider(
+                minimum=0.05, maximum=1.0, value=0.25, step=0.05,
+                label="Confidence Threshold",
+            )
+            live_status = gr.Markdown()
+            with gr.Row():
+                live_start = gr.Button("🎥 Start Live Camera", variant="primary", size="lg")
+                live_stop = gr.Button("⏹️ Stop Camera", variant="stop", size="lg")
+
+            live_start.click(fn=run_live_camera, inputs=[live_conf], outputs=[live_status])
+            live_stop.click(fn=stop_live_camera, inputs=[], outputs=[live_status])
+
         gr.Markdown(
             "---\n"
-            "*Built with [Ultralytics YOLO26](https://docs.ultralytics.com) & "
+            "*[DroneAI](https://github.com/clitic/droneai) · "
+            "[YOLO26](https://docs.ultralytics.com) · "
             "[Gradio](https://gradio.app)*"
         )
 
@@ -213,4 +272,8 @@ def build_app() -> gr.Blocks:
 
 if __name__ == "__main__":
     app = build_app()
-    app.launch(share=False, inbrowser=True)
+    app.launch(
+        share=False,
+        inbrowser=True,
+        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="cyan"),
+    )
