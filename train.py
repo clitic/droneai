@@ -25,8 +25,20 @@ def main():
 
     # Resolve data.yaml with whitespace-safe path
     data_yaml = str(Path(__file__).resolve().parent / "data" / "unified" / "data.yaml")
+    last_pt = Path(__file__).resolve().parent / "runs" / args.name / "weights" / "last.pt"
 
-    print(f"📦  Model     : {args.model}")
+    # Resume requires loading from the checkpoint, not the pretrained model
+    if args.resume:
+        if not last_pt.exists():
+            print(f"❌  Cannot resume: checkpoint not found at {last_pt}")
+            print("   Start a new training run first (without --resume).")
+            return
+        load_model = str(last_pt)
+        print(f"🔄  Resuming from: {last_pt}")
+    else:
+        load_model = args.model
+
+    print(f"📦  Model     : {load_model}")
     print(f"📁  Dataset   : {data_yaml}")
     print(f"🔄  Epochs    : {args.epochs}")
     print(f"📐  Image size: {args.imgsz}")
@@ -34,7 +46,7 @@ def main():
     print(f"🖥️  Device    : {args.device}")
     print()
 
-    model = YOLO(args.model)
+    model = YOLO(load_model)
 
     model.train(
         data=data_yaml,
