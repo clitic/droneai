@@ -21,7 +21,7 @@ Detects **17 classes** across buildings, infrastructure, vehicles, and road elem
 
 ```bash
 # Clone and install dependencies
-git clone <repo-url> && cd droneai
+git clone https://github.com/clitic/droneai.git && cd droneai
 uv sync
 ```
 
