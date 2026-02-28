@@ -1,5 +1,5 @@
 """
-Unify multiple YOLO26-format datasets from ./data into a single dataset at ./unified_dataset.
+Unify multiple YOLO26-format datasets from ./data into a single dataset at ./data/unified.
 Handles whitespace in paths, uses multithreading, and tracks progress with tqdm.
 """
 
@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 DATA_ROOT = Path(__file__).resolve().parent / "data"
-OUTPUT_ROOT = Path(__file__).resolve().parent / "data/unified"
+OUTPUT_ROOT = Path(__file__).resolve().parent / "data" / "unified"
 MAX_WORKERS = 16  # number of threads for copying
 
 # ── Discover datasets & build unified class list ──────────────────────────────
@@ -192,7 +192,7 @@ def main():
             splits_present[split_name] = f"./{split_name}/images"
 
     unified_yaml = {
-        "path": ".",
+        "path": str(OUTPUT_ROOT),
         "nc": len(unified_names),
         "names": unified_names,
     }

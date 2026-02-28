@@ -1,10 +1,24 @@
 [project]
 name = "droneai"
 version = "0.1.0"
-description = "Add your description here"
+description = "YOLO26 drone object detection with Gradio web UI"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "gradio>=6.8.0",
+    "opencv-python>=4.13.0.92",
     "pyyaml>=6.0.3",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
     "tqdm>=4.67.3",
+    "ultralytics>=8.4.19",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu126" }]
+torchvision = [{ index = "pytorch-cu126" }]

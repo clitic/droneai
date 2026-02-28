@@ -8,4 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
-data
+
+# YOLO
+data/*
+!data/README.md
+runs
+yolo26*.pt
