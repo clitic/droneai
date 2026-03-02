@@ -302,13 +302,11 @@ CSS = """
 # ---------------------------------------------------------------------------
 def build_app() -> gr.Blocks:
     yolo_models, gru_models = _find_models()
-    dy = yolo_models[0] if yolo_models else "runs/detect/train/weights/best.pt"
+    dy = yolo_models[0] if yolo_models else "runs/detect/visdrone/weights/best.pt"
     dg = gru_models[0] if gru_models else "models/gru_best.pt"
 
     with gr.Blocks(
         title="DroneAI",
-        theme=gr.themes.Soft(primary_hue="indigo", secondary_hue="purple", neutral_hue="slate", font=gr.themes.GoogleFont("Inter")),
-        css=CSS,
     ) as app:
         with gr.Row(elem_id="header-row"):
             gr.Markdown("# DroneAI -- Anomaly Detection System\nDrone-as-First-Responder | YOLOv26 + GRU Pipeline")
@@ -375,16 +373,16 @@ Video/Frames --> YOLOv26n (Detection + Embedding) --> GRU (Anomaly Classificatio
 ### Pipeline
 | Stage | Script | Description |
 |-------|--------|-------------|
-| 1 | `src/train_yolo.py` | Fine-tune YOLOv26n on VisDrone |
-| 2 | `src/extract_features.py` | Extract embeddings from UCF-Crime |
-| 3 | `src/train_classifier.py` | Train GRU anomaly classifier |
+| 1 | `src/train_detector.py` | Fine-tune YOLOv26n on VisDrone |
+| 2 | `src/extract_embeddings.py` | Extract embeddings from UCF-Crime |
+| 3 | `src/train_anomaly.py` | Train GRU anomaly classifier |
 | UI | `src/app.py` | This Gradio WebUI |
 
 ### Quick Start
 ```bash
-uv run python src/train_yolo.py
-uv run python src/extract_features.py
-uv run python src/train_classifier.py
+uv run python src/train_detector.py
+uv run python src/extract_embeddings.py
+uv run python src/train_anomaly.py
 uv run python src/app.py
 ```
                 """)
@@ -394,4 +392,11 @@ uv run python src/app.py
 
 if __name__ == "__main__":
     app = build_app()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False, show_error=True)
+    app.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+        show_error=True,
+        theme=gr.themes.Soft(primary_hue="indigo", secondary_hue="purple", neutral_hue="slate", font=gr.themes.GoogleFont("Inter")),
+        css=CSS,
+    )

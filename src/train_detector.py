@@ -17,7 +17,7 @@ def main() -> None:
         raise FileNotFoundError(f"Dataset config not found: {data}")
 
     # Auto-resume from last checkpoint if previous run exists
-    last = Path("runs/visdrone/weights/last.pt")
+    last = Path("runs/detect/visdrone/weights/last.pt")
     if last.exists():
         model_path, resume = str(last), True
         print(f"  -> Resuming from: {last}")
@@ -39,12 +39,11 @@ def main() -> None:
         batch=16,
         device="0",
         workers=8,
-        project="runs",
         name="visdrone",
         exist_ok=True,
         resume=resume,
         # -- Speed optimizations --
-        cache=True,             # cache images in RAM for faster loading
+        cache="disk",           # cache images to disk for faster loading
         rect=False,             # rectangular training (can hurt mAP on small objects)
         close_mosaic=10,        # disable mosaic in last 10 epochs
         amp=True,               # automatic mixed precision (FP16)
@@ -70,7 +69,7 @@ def main() -> None:
         verbose=True,
     )
 
-    best = Path("runs/visdrone/weights/best.pt")
+    best = Path("runs/detect/visdrone/weights/best.pt")
     if best.exists():
         print(f"\n[OK] Training complete! Best weights: {best}")
         print("Running validation...")

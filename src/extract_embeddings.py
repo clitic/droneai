@@ -19,7 +19,7 @@ from ultralytics import YOLO
 
 def find_model() -> Path:
     """Return the path to the trained YOLO model."""
-    best = Path("runs/visdrone/weights/best.pt")
+    best = Path("runs/detect/visdrone/weights/best.pt")
     if not best.exists():
         print(f"[ERROR] Model not found: {best}")
         print("        Train first: uv run python src/train_detector.py")
