@@ -34,8 +34,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--model",
         type=str,
-        default="runs/detect/train/weights/best.pt",
-        help="Path to fine-tuned YOLO weights",
+        default="",
+        help="Path to fine-tuned YOLO weights (auto-detected if empty)",
     )
     p.add_argument(
         "--data-dir",
@@ -159,23 +159,38 @@ def main() -> None:
     args = parse_args()
 
     # Validate paths
-    model_path = Path(args.model)
     data_dir = Path(args.data_dir)
+    if not data_dir.exists():
+        raise FileNotFoundError(f"UCF-Crime dataset not found: {data_dir}")
+
+    # Auto-discover model if not specified
+    if args.model:
+        model_path = Path(args.model)
+    else:
+        # Search common locations
+        candidates = sorted(Path("runs").rglob("best.pt")) if Path("runs").exists() else []
+        if candidates:
+            model_path = candidates[-1]  # Use the most recent
+            print(f"  [AUTO] Found model: {model_path}")
+        else:
+            raise FileNotFoundError(
+                "No YOLO model found in runs/.\n"
+                "Train the model first with: uv run python train_yolo.py\n"
+                "Or specify --model path/to/best.pt"
+            )
 
     if not model_path.exists():
         raise FileNotFoundError(
             f"YOLO model not found: {model_path}\n"
             "Train the model first with: uv run python train_yolo.py"
         )
-    if not data_dir.exists():
-        raise FileNotFoundError(f"UCF-Crime dataset not found: {data_dir}")
 
     output_dir = Path(args.output_dir)
 
     print("=" * 60)
-    print("  DroneAI — Stage 2: Feature Extraction (UCF-Crime)")
+    print("  DroneAI -- Stage 2: Feature Extraction (UCF-Crime)")
     print("=" * 60)
-    print(f"  Model:      {args.model}")
+    print(f"  Model:      {model_path}")
     print(f"  Data:       {args.data_dir}")
     print(f"  Output:     {args.output_dir}")
     print(f"  Batch size: {args.batch_size}")
@@ -192,13 +207,13 @@ def main() -> None:
     for split in ["Train", "Test"]:
         split_dir = data_dir / split
         if not split_dir.exists():
-            print(f"⚠️  Split directory not found: {split_dir}, skipping...")
+            print(f"[WARN] Split directory not found: {split_dir}, skipping...")
             continue
 
         categories = sorted(
             [d for d in split_dir.iterdir() if d.is_dir()]
         )
-        print(f"\n📂 Processing {split} split ({len(categories)} categories)...")
+        print(f"\n[*] Processing {split} split ({len(categories)} categories)...")
 
         for cat_dir in categories:
             category = cat_dir.name
@@ -211,7 +226,7 @@ def main() -> None:
                 continue
 
             print(
-                f"  📁 {category} ({label_str}): {len(clips)} clips"
+                f"  [{label_str}] {category}: {len(clips)} clips"
             )
 
             # Create output directory
@@ -255,15 +270,15 @@ def main() -> None:
         json.dump(manifest, f, indent=2)
 
     print("\n" + "=" * 60)
-    print(f"  ✅ Feature extraction complete!")
-    print(f"  📊 Total clips:  {total_clips}")
-    print(f"  🖼️  Total frames: {total_frames}")
+    print(f"  [OK] Feature extraction complete!")
+    print(f"  Total clips:  {total_clips}")
+    print(f"  Total frames: {total_frames}")
     if total_clips > 0:
         sample = next(iter(manifest.values()))
-        print(f"  📐 Embedding dim: {sample['embedding_dim']}")
-    print(f"  📄 Manifest:     {manifest_path}")
+        print(f"  Embedding dim: {sample['embedding_dim']}")
+    print(f"  Manifest:     {manifest_path}")
     print("=" * 60)
-    print("\n🚀 Next step: train GRU classifier with train_classifier.py")
+    print("\n>> Next step: train GRU classifier with train_classifier.py")
 
 
 if __name__ == "__main__":

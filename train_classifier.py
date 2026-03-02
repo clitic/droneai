@@ -372,11 +372,11 @@ def main() -> None:
                 "seq_len": args.seq_len,
             }
             torch.save(checkpoint, save_dir / "gru_best.pt")
-            print(f"           └─ ✅ New best model saved (AUC: {best_auc:.4f})")
+            print(f"           +-- [BEST] New best model saved (AUC: {best_auc:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
-                print(f"\n  ⏹  Early stopping at epoch {epoch} (patience={args.patience})")
+                print(f"\n  [STOP] Early stopping at epoch {epoch} (patience={args.patience})")
                 break
 
     # Final evaluation with best model
@@ -407,7 +407,7 @@ def main() -> None:
     print(f"  AUC-ROC:  {final_auc:.4f}")
     print(f"\n{classification_report(all_labels, all_preds, target_names=['Normal', 'Anomaly'])}")
     print(f"\n  Best model saved to: {save_dir / 'gru_best.pt'}")
-    print("\n🚀 Pipeline complete! Use inference.py or app.py to run predictions.")
+    print("\n>> Pipeline complete! Use inference.py or app.py to run predictions.")
 
 
 if __name__ == "__main__":

@@ -36,8 +36,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--yolo-model",
         type=str,
-        default="runs/detect/train/weights/best.pt",
-        help="Path to fine-tuned YOLO weights",
+        default="",
+        help="Path to fine-tuned YOLO weights (auto-detected if empty)",
     )
     p.add_argument(
         "--gru-model",
@@ -219,18 +219,30 @@ def main() -> None:
     else:
         device = torch.device(args.device)
 
+    # Resolve YOLO model
+    if args.yolo_model:
+        yolo_path = args.yolo_model
+    else:
+        candidates = sorted(Path("runs").rglob("best.pt")) if Path("runs").exists() else []
+        if candidates:
+            yolo_path = str(candidates[-1])
+            print(f"  [AUTO] Found YOLO model: {yolo_path}")
+        else:
+            print("[ERROR] No YOLO model found. Specify --yolo-model.")
+            return
+
     print("=" * 60)
-    print("  DroneAI — End-to-End Inference")
+    print("  DroneAI -- End-to-End Inference")
     print("=" * 60)
     print(f"  Source:    {args.source}")
-    print(f"  YOLO:     {args.yolo_model}")
+    print(f"  YOLO:     {yolo_path}")
     print(f"  GRU:      {args.gru_model}")
     print(f"  Device:   {device}")
     print(f"  Threshold: {args.threshold}")
     print("=" * 60)
 
     # Load models
-    yolo_model = YOLO(args.yolo_model)
+    yolo_model = YOLO(yolo_path)
 
     # Load GRU
     gru_ckpt = torch.load(args.gru_model, map_location=device, weights_only=True)
@@ -247,11 +259,11 @@ def main() -> None:
     # Load frames
     frames = load_frames(args.source)
     if not frames:
-        print("❌ No frames loaded. Check your source path.")
+        print("[ERROR] No frames loaded. Check your source path.")
         return
 
     # Extract embeddings
-    print("\n📐 Extracting embeddings...")
+    print("\nExtracting embeddings...")
     embeddings = extract_frame_embeddings(yolo_model, frames)
     print(f"  Embeddings shape: {embeddings.shape}")
 
@@ -259,14 +271,14 @@ def main() -> None:
     anomaly_prob = predict_anomaly(gru_model, embeddings, args.seq_len, device)
     is_anomaly = anomaly_prob >= args.threshold
 
-    print(f"\n{'🚨' if is_anomaly else '✅'} Anomaly probability: {anomaly_prob:.4f}")
+    print(f"\n{'[ALERT]' if is_anomaly else '[OK]'} Anomaly probability: {anomaly_prob:.4f}")
     print(f"   Verdict: {'ANOMALY DETECTED' if is_anomaly else 'Normal'}")
 
     # Annotate and save frames
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n🎨 Annotating frames...")
+    print(f"\nAnnotating frames...")
     annotated_frames = []
     for i, frame in enumerate(frames):
         # Run YOLO detection for bounding boxes
@@ -286,9 +298,9 @@ def main() -> None:
         for frame in annotated_frames:
             writer.write(frame)
         writer.release()
-        print(f"  🎬 Video saved: {video_path}")
+        print(f"  Video saved: {video_path}")
 
-    print(f"\n  ✅ {len(annotated_frames)} annotated frames saved to: {output_dir}")
+    print(f"\n  [OK] {len(annotated_frames)} annotated frames saved to: {output_dir}")
 
 
 if __name__ == "__main__":

@@ -90,7 +90,7 @@ def main() -> None:
         last_ckpt = Path(args.project) / args.name / "weights" / "last.pt"
         if last_ckpt.exists():
             model_path = str(last_ckpt)
-            print(f"  ↪ Resuming from: {last_ckpt}")
+            print(f"  -> Resuming from: {last_ckpt}")
         else:
             raise FileNotFoundError(
                 f"Cannot resume — checkpoint not found: {last_ckpt}\n"
@@ -152,16 +152,16 @@ def main() -> None:
     # Validate best model
     best_weights = Path(args.project) / args.name / "weights" / "best.pt"
     if best_weights.exists():
-        print(f"\n✅ Training complete! Best weights: {best_weights}")
+        print(f"\n[OK] Training complete! Best weights: {best_weights}")
         print("Running validation on best model...")
         best_model = YOLO(str(best_weights))
         metrics = best_model.val(data=str(data_path), imgsz=args.imgsz)
         print(f"  mAP50:    {metrics.box.map50:.4f}")
         print(f"  mAP50-95: {metrics.box.map:.4f}")
     else:
-        print(f"\n⚠️  Best weights not found at {best_weights}")
+        print(f"\n[WARN] Best weights not found at {best_weights}")
 
-    print("\n🚀 Next step: extract features with extract_features.py")
+    print("\n>> Next step: extract features with extract_features.py")
 
 
 if __name__ == "__main__":

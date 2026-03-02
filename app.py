@@ -196,13 +196,13 @@ def analyze_video(
 ):
     """Analyze a single video (main tab callback)."""
     if not video_path:
-        return None, "⚠️ Please upload a video.", None
+        return None, "[!] Please upload a video.", None
 
     if not yolo_path or not Path(yolo_path).exists():
-        return None, "⚠️ YOLO model not found. Train Stage 1 first.", None
+        return None, "[!] YOLO model not found. Train Stage 1 first.", None
 
     if not gru_path or not Path(gru_path).exists():
-        return None, "⚠️ GRU model not found. Train Stage 3 first.", None
+        return None, "[!] GRU model not found. Train Stage 3 first.", None
 
     progress(0.1, desc="Loading models...")
     yolo = _load_yolo(yolo_path)
@@ -211,7 +211,7 @@ def analyze_video(
     progress(0.2, desc="Loading video frames...")
     frames = _load_video_frames(video_path, max_frames=200)
     if not frames:
-        return None, "⚠️ Could not load any frames from the video.", None
+        return None, "[!] Could not load any frames from the video.", None
 
     progress(0.4, desc=f"Extracting embeddings from {len(frames)} frames...")
     embeddings = _extract_embeddings(yolo, frames)
@@ -247,7 +247,7 @@ def analyze_video(
     writer.release()
 
     # Build result text
-    verdict_emoji = "🚨" if is_anomaly else "✅"
+    verdict_emoji = "[ALERT]" if is_anomaly else "[OK]"
     status_text = "ANOMALY DETECTED" if is_anomaly else "NORMAL"
     result_md = f"""
 ## {verdict_emoji} {status_text}
@@ -273,10 +273,10 @@ def analyze_image(
 ):
     """Run YOLO detection on a single image (no GRU — just object detection)."""
     if image is None:
-        return None, "⚠️ Please upload an image."
+        return None, "[!] Please upload an image."
 
     if not yolo_path or not Path(yolo_path).exists():
-        return None, "⚠️ YOLO model not found."
+        return None, "[!] YOLO model not found."
 
     yolo = _load_yolo(yolo_path)
     # Gradio gives RGB, YOLO expects BGR
@@ -306,7 +306,7 @@ def analyze_image(
 
     counts_str = ", ".join(f"{k}: {v}" for k, v in sorted(class_counts.items()))
     result_md = f"""
-## 🔍 Detection Results
+## Detection Results
 
 | Metric | Value |
 |--------|-------|
@@ -327,11 +327,11 @@ def batch_process(
 ):
     """Batch-process a directory of video clips."""
     if not folder_path or not Path(folder_path).exists():
-        return "⚠️ Folder not found."
+        return "[!] Folder not found."
     if not yolo_path or not Path(yolo_path).exists():
-        return "⚠️ YOLO model not found."
+        return "[!] YOLO model not found."
     if not gru_path or not Path(gru_path).exists():
-        return "⚠️ GRU model not found."
+        return "[!] GRU model not found."
 
     yolo = _load_yolo(yolo_path)
     gru, cfg = _load_gru(gru_path)
@@ -350,9 +350,9 @@ def batch_process(
                 items.append(("frames", f))
 
     if not items:
-        return "⚠️ No videos or frame folders found in the directory."
+        return "[!] No videos or frame folders found in the directory."
 
-    results_md = "## 📊 Batch Analysis Results\n\n"
+    results_md = "## Batch Analysis Results\n\n"
     results_md += "| # | Clip | Type | Frames | Prob | Verdict |\n"
     results_md += "|---|------|------|--------|------|---------|" + "\n"
 
@@ -368,13 +368,13 @@ def batch_process(
             frames = [f for f in frames if f is not None]
 
         if not frames:
-            results_md += f"| {i+1} | {item_path.name} | {item_type} | 0 | — | ⚠️ Error |\n"
+            results_md += f"| {i+1} | {item_path.name} | {item_type} | 0 | -- | Error |\n"
             continue
 
         embeddings = _extract_embeddings(yolo, frames)
         prob = _predict(gru, embeddings, cfg["seq_len"])
         is_anomaly = prob >= threshold
-        emoji = "🚨" if is_anomaly else "✅"
+        emoji = "[!]" if is_anomaly else "[OK]"
         verdict = "ANOMALY" if is_anomaly else "Normal"
 
         results_md += (
@@ -382,7 +382,7 @@ def batch_process(
             f"{len(frames)} | {prob:.4f} | {emoji} {verdict} |\n"
         )
 
-    anomaly_count = results_md.count("🚨")
+    anomaly_count = results_md.count("[!]")
     total_count = len(items)
     results_md += f"\n\n**Summary:** {anomaly_count}/{total_count} clips flagged as anomalous.\n"
 
