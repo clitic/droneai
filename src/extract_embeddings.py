@@ -61,13 +61,14 @@ def embed_clip(model: YOLO, paths: list[Path], batch_size: int = 16) -> np.ndarr
 
 
 def main() -> None:
+    # embed() requires PyTorch model — ONNX does not support intermediate layer extraction
     model_path = Path("runs/detect/visdrone/weights/best.pt")
-    data_dir = Path("datasets/ufc-crime")
-
     if not model_path.exists():
         print(f"[ERROR] Model not found: {model_path}")
         print("        Train first: uv run python src/train_detector.py")
         sys.exit(1)
+
+    data_dir = Path("datasets/ufc-crime")
     if not data_dir.exists():
         print(f"[ERROR] Dataset not found: {data_dir}")
         sys.exit(1)

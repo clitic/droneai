@@ -22,8 +22,8 @@ droneai/
 │   └── app.py                 # Gradio WebUI
 ├── datasets/
 │   ├── visdrone/              # VisDrone2019-DET
-│   └── ufc-crime/             # UCF-Crime (pre-extracted frames)
-├── features/                  # Generated .npy embeddings
+│   ├── ufc-crime/             # UCF-Crime (pre-extracted frames)
+│   └── ucf-crime-features/    # Generated .npy embeddings
 ├── models/                    # Generated GRU checkpoints
 ├── runs/                      # Generated YOLO training runs
 └── pyproject.toml
@@ -38,7 +38,7 @@ uv sync
 
 # Run pipeline (in order)
 uv run python src/train_detector.py        # Stage 1 - auto-resumes if interrupted
-uv run python src/extract_embeddings.py    # Stage 2 - auto-discovers model
+uv run python src/extract_embeddings.py    # Stage 2
 uv run python src/train_anomaly.py         # Stage 3
 
 # Launch UI
@@ -54,7 +54,7 @@ No CLI flags needed -- all scripts use best defaults with auto-resume.
 | 1 | `train_detector.py` | YOLOv26n on VisDrone, 50 epochs, cache+AMP for speed, auto-resume |
 | 2 | `extract_embeddings.py` | `model.embed()` on UCF-Crime frames, saves .npy per clip |
 | 3 | `train_anomaly.py` | Bi-GRU + attention, weighted BCE, cosine LR, early stopping |
-| UI | `app.py` | Video/Image/Batch analysis via Gradio |
+| UI | `app.py` | Video/Image analysis via Gradio |
 
 ## Datasets
 
