@@ -85,19 +85,34 @@ def main() -> None:
             "Make sure datasets/visdrone/visdrone.yaml exists."
         )
 
+    # Resolve model path for resume
+    if args.resume:
+        last_ckpt = Path(args.project) / args.name / "weights" / "last.pt"
+        if last_ckpt.exists():
+            model_path = str(last_ckpt)
+            print(f"  ↪ Resuming from: {last_ckpt}")
+        else:
+            raise FileNotFoundError(
+                f"Cannot resume — checkpoint not found: {last_ckpt}\n"
+                "Run a fresh training first, or check --project / --name."
+            )
+    else:
+        model_path = args.model
+
     print("=" * 60)
     print("  DroneAI — Stage 1: YOLOv26n Fine-Tuning on VisDrone")
     print("=" * 60)
-    print(f"  Model:   {args.model}")
+    print(f"  Model:   {model_path}")
     print(f"  Data:    {args.data}")
     print(f"  Epochs:  {args.epochs}")
     print(f"  ImgSz:   {args.imgsz}")
     print(f"  Batch:   {args.batch}")
     print(f"  Device:  {args.device}")
+    print(f"  Resume:  {args.resume}")
     print("=" * 60)
 
     # Load model
-    model = YOLO(args.model)
+    model = YOLO(model_path)
 
     # Train
     model.train(
