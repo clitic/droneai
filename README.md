@@ -1,15 +1,54 @@
 # DroneAI -- Anomaly Detection System
 
-**Drone-as-First-Responder** anomaly detection: YOLOv26 object detection + GRU temporal classification.
+**Drone-as-First-Responder** surveillance system that detects objects in drone footage and classifies anomalous activities using deep learning.
 
 ---
 
 ## Architecture
 
+The system uses a two-stage approach: a vision model extracts spatial features from each frame, then a temporal model analyzes how those features change over time to classify the type of activity.
+
 ```
-Video/Frames --> YOLOv26n (Detection + Embedding) --> GRU (Anomaly Classification)
-                    Feature Vectors (T, D)              Probability [0..1]
+                    Stage 1                    Stage 2                    Stage 3
+                 (trained once)             (run once)               (trained once)
+                      |                        |                          |
+                      v                        v                          v
+Video Frames --> YOLOv26n Backbone --> Feature Embeddings --> Bi-GRU + Attention --> Class Prediction
+                 (per-frame)            (T, 576)              (temporal)           14 classes
 ```
+
+### YOLOv26n -- Object Detector (Stage 1)
+
+- **Model:** YOLOv26n (nano variant, ~2.6M params)
+- **Training data:** [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) -- 6,471 drone-perspective images, 10 object classes (pedestrian, car, bicycle, truck, bus, etc.)
+- **Purpose:** Fine-tuned to detect objects commonly seen from drones. The backbone's penultimate layer produces a 576-dimensional embedding per frame that encodes *what objects are present and where*.
+- **Training:** 50 epochs, 640px images, disk caching, AMP (FP16), cosine LR, auto-resume from checkpoint
+
+### Bi-GRU + Attention -- Anomaly Classifier (Stage 3)
+
+- **Model:** 2-layer Bidirectional GRU with learned attention pooling (~200K params)
+- **Training data:** [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) -- 1,610 clips across 14 categories
+- **Input:** Sequence of YOLO embeddings (64 frames x 576 dims) from a video clip
+- **Output:** One of 14 classes:
+  - `Normal` -- no anomaly
+  - `Abuse`, `Arrest`, `Arson`, `Assault`, `Burglary`, `Explosion`, `Fighting`, `RoadAccidents`, `Robbery`, `Shooting`, `Shoplifting`, `Stealing`, `Vandalism`
+- **How it works:**
+  1. The GRU reads the embedding sequence bidirectionally, capturing temporal patterns in both directions
+  2. An attention layer learns which frames are most important for classification
+  3. A classification head maps the attended representation to one of 14 classes
+- **Training:** CrossEntropyLoss with inverse-frequency class weights, AdamW optimizer, cosine annealing, early stopping (patience=10)
+
+### Inference Pipeline (Gradio UI)
+
+```
+Upload Video --> Read Frames --> YOLO embed() --> Bi-GRU --> Predicted Class + Confidence
+                                      |
+                                      +--> YOLO detect() --> Annotated Frames (bounding boxes)
+```
+
+The UI runs both detection (bounding boxes) and classification (anomaly type) on uploaded videos/images.
+
+---
 
 ## Project Structure
 
@@ -17,15 +56,14 @@ Video/Frames --> YOLOv26n (Detection + Embedding) --> GRU (Anomaly Classificatio
 droneai/
 ├── src/
 │   ├── train_detector.py      # Stage 1: Fine-tune YOLOv26n on VisDrone
-│   ├── extract_embeddings.py  # Stage 2: YOLO embeddings from UCF-Crime
-│   ├── train_anomaly.py       # Stage 3: GRU anomaly classifier
-│   └── app.py                 # Gradio WebUI
+│   ├── extract_embeddings.py  # Stage 2: Extract YOLO embeddings from UCF-Crime
+│   ├── train_anomaly.py       # Stage 3: Train Bi-GRU anomaly classifier
+│   └── app.py                 # Gradio WebUI (video + image analysis)
 ├── datasets/
-│   ├── visdrone/              # VisDrone2019-DET
-│   ├── ufc-crime/             # UCF-Crime (pre-extracted frames)
+│   ├── visdrone/              # VisDrone2019-DET dataset
+│   ├── ufc-crime/             # UCF-Crime frames
 │   └── ucf-crime-features/    # Generated .npy embeddings
-├── models/                    # Generated GRU checkpoints
-├── runs/                      # Generated YOLO training runs
+├── runs/                      # YOLO training runs + GRU checkpoint
 └── pyproject.toml
 ```
 
@@ -47,23 +85,23 @@ uv run python src/app.py                   # http://localhost:7860
 
 No CLI flags needed -- all scripts use best defaults with auto-resume.
 
-## Pipeline
+## Pipeline Details
 
-| Stage | Script | What it does |
-|-------|--------|-------------|
-| 1 | `train_detector.py` | YOLOv26n on VisDrone, 50 epochs, cache+AMP for speed, auto-resume |
-| 2 | `extract_embeddings.py` | `model.embed()` on UCF-Crime frames, saves .npy per clip |
-| 3 | `train_anomaly.py` | Bi-GRU + attention, weighted BCE, cosine LR, early stopping |
-| UI | `app.py` | Video/Image analysis via Gradio |
+| Stage | Script | Model | Data | Output |
+|-------|--------|-------|------|--------|
+| 1 | `train_detector.py` | YOLOv26n | VisDrone (6.4K images) | `runs/detect/visdrone/weights/best.pt` |
+| 2 | `extract_embeddings.py` | Trained YOLO | UCF-Crime (1.26M frames) | `datasets/ucf-crime-features/*.npy` |
+| 3 | `train_anomaly.py` | Bi-GRU (14-class) | Extracted embeddings | `runs/gru_best.pt` |
+| UI | `app.py` | Both models | User uploads | Annotated video + anomaly class |
 
 ## Datasets
 
 See [`datasets/README.md`](datasets/README.md) for download instructions.
 
-| Dataset | Purpose | Classes |
-|---------|---------|---------|
-| [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) | Drone object detection | 10 |
-| [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) | Anomaly classification | 13 + Normal |
+| Dataset | Purpose | Size | Classes |
+|---------|---------|------|---------|
+| [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) | Object detection from drones | 8.6K images | 10 (pedestrian, car, ...) |
+| [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) | Anomaly classification | 1,610 clips | 14 (Normal + 13 anomaly types) |
 
 ## Tech Stack
 
