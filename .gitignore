@@ -1,4 +1,4 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
@@ -7,13 +7,17 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 
-# YOLO
+# Datasets (large, download separately)
 datasets/*
 !datasets/README.md
+!datasets/visdrone/visdrone.yaml
+
+# YOLO
 runs/
-yolo26*.pt
+*.pt
+!datasets/**/*.pt
 
 # Pipeline outputs
 features/
@@ -22,3 +26,6 @@ models/
 
 # Gradio
 flagged/
+
+# Misc
+output/
