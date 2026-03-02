@@ -44,10 +44,13 @@ def _load_gru(p):
     ckpt = torch.load(p, map_location=d, weights_only=True)
     _gru_cfg = {k: ckpt[k] for k in ("input_dim", "hidden_size", "num_layers", "dropout", "bidirectional")}
     _gru_cfg["seq_len"] = ckpt.get("seq_len", 64)
+    _gru_cfg["num_classes"] = ckpt.get("num_classes", 1)
+    _gru_cfg["class_names"] = ckpt.get("class_names", ["Normal", "Anomaly"])
     _gru = AnomalyGRU(
         input_dim=_gru_cfg["input_dim"], hidden_size=_gru_cfg["hidden_size"],
         num_layers=_gru_cfg["num_layers"], dropout=_gru_cfg["dropout"],
         bidirectional=_gru_cfg["bidirectional"],
+        num_classes=_gru_cfg["num_classes"],
     ).to(d)
     _gru.load_state_dict(ckpt["model_state_dict"])
     _gru.eval()
@@ -65,12 +68,20 @@ def _embed(yolo, frames, bs=16):
     return np.stack(embs)
 
 
-def _classify(gru, embs, seq_len):
+def _classify(gru, embs, cfg):
+    """Returns (class_name, confidence, all_probs_dict)."""
     d = _device()
+    seq_len = cfg["seq_len"]
+    class_names = cfg["class_names"]
     T, D = embs.shape
     feat = embs[np.linspace(0, T-1, seq_len, dtype=int)] if T >= seq_len else np.concatenate([embs, np.zeros((seq_len-T, D), dtype=embs.dtype)])
     with torch.no_grad():
-        return torch.sigmoid(gru(torch.from_numpy(feat).float().unsqueeze(0).to(d))).item()
+        logits = gru(torch.from_numpy(feat).float().unsqueeze(0).to(d))
+        probs = torch.softmax(logits, dim=1).cpu().numpy().flatten()
+    pred_idx = int(probs.argmax())
+    pred_name = class_names[pred_idx] if pred_idx < len(class_names) else "Unknown"
+    all_probs = {class_names[i]: float(probs[i]) for i in range(len(class_names))}
+    return pred_name, float(probs[pred_idx]), all_probs
 
 
 # Per-class color palette (BGR) -- 10 distinct colors for VisDrone classes
@@ -92,9 +103,9 @@ def _class_color(cls_id: int) -> tuple:
     return _PALETTE[cls_id % len(_PALETTE)]
 
 
-def _draw(frame, res, prob, thresh):
+def _draw(frame, res, pred_name, pred_conf, is_anomaly):
     out = frame.copy()
-    if res and res[0].boxes is not None:
+    if res and hasattr(res[0], "boxes") and res[0].boxes is not None:
         for b in res[0].boxes:
             x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
             cls_id = int(b.cls[0].item())
@@ -104,14 +115,13 @@ def _draw(frame, res, prob, thresh):
             cv2.putText(out, f"{nm} {b.conf[0].item():.2f}", (x1, max(y1-8, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
     h, w = out.shape[:2]
-    bad = prob >= thresh
     ov = out.copy()
     cv2.rectangle(ov, (0, 0), (w, 52), (0, 0, 0), -1)
     out = cv2.addWeighted(ov, 0.8, out, 0.2, 0, dst=out)
-    color = (0, 0, 255) if bad else (0, 200, 0)
-    cv2.putText(out, f"{'ANOMALY' if bad else 'NORMAL'}  {prob:.1%}", (12, 36),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2, cv2.LINE_AA)
-    bw = int((w - 24) * prob)
+    color = (0, 0, 255) if is_anomaly else (0, 200, 0)
+    label = f"{pred_name}  {pred_conf:.1%}"
+    cv2.putText(out, label, (12, 36), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2, cv2.LINE_AA)
+    bw = int((w - 24) * pred_conf)
     cv2.rectangle(out, (12, 44), (12 + bw, 49), color, -1)
     cv2.rectangle(out, (12, 44), (w - 12, 49), (100, 100, 100), 1)
     return out
@@ -136,9 +146,9 @@ def _read_video(path, max_frames=300):
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
-def analyze_video(video, thresh, conf, progress=gr.Progress()):
+def analyze_video(video, conf, progress=gr.Progress()):
     yolo_p = "runs/detect/visdrone/weights/best.pt"
-    gru_p = "models/gru_best.pt"
+    gru_p = "runs/gru_best.pt"
 
     if not video:
         return None, "Upload a video to begin.", None
@@ -160,29 +170,41 @@ def analyze_video(video, thresh, conf, progress=gr.Progress()):
     embs = _embed(yolo, frames)
 
     progress(0.7, desc="Classifying")
-    prob = _classify(gru, embs, cfg["seq_len"])
-    anom = prob >= thresh
+    pred_name, pred_conf, all_probs = _classify(gru, embs, cfg)
+    is_anomaly = pred_name != "Normal"
 
     progress(0.8, desc="Annotating")
     idxs = np.linspace(0, len(frames)-1, min(8, len(frames)), dtype=int)
-    gallery = [cv2.cvtColor(_draw(frames[i], yolo(frames[i], conf=conf, verbose=False), prob, thresh),
-               cv2.COLOR_BGR2RGB) for i in idxs]
+    gallery = []
+    all_counts: dict[str, int] = {}
+    for i in idxs:
+        det_res = yolo(frames[i], conf=conf, verbose=False)
+        gallery.append(cv2.cvtColor(_draw(frames[i], det_res, pred_name, pred_conf, is_anomaly), cv2.COLOR_BGR2RGB))
+        if det_res and hasattr(det_res[0], "boxes") and det_res[0].boxes is not None:
+            for b in det_res[0].boxes:
+                nm = det_res[0].names.get(int(b.cls[0].item()), "?")
+                all_counts[nm] = all_counts.get(nm, 0) + 1
 
     progress(0.9, desc="Encoding video")
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     h, w = frames[0].shape[:2]
     wr = cv2.VideoWriter(tmp.name, cv2.VideoWriter.fourcc(*"mp4v"), 24, (w, h))
     for f in frames:
-        wr.write(_draw(f, yolo(f, conf=conf, verbose=False), prob, thresh))
+        wr.write(_draw(f, yolo(f, conf=conf, verbose=False), pred_name, pred_conf, is_anomaly))
     wr.release()
 
-    verdict = "ANOMALY DETECTED" if anom else "NORMAL"
+    objects_str = ", ".join(f"{k}: {v}" for k, v in sorted(all_counts.items(), key=lambda x: -x[1]))
+    top3 = sorted(all_probs.items(), key=lambda x: -x[1])[:3]
+    top3_str = "  \n".join(f"  {name}: {p:.1%}" for name, p in top3)
+
+    verdict = f"ANOMALY: {pred_name}" if is_anomaly else "NORMAL"
     md = f"""### {verdict}
 
-**Probability:** {prob:.4f} ({prob:.1%})  
-**Threshold:** {thresh}  
+**Prediction:** {pred_name} ({pred_conf:.1%})  
+**Top predictions:**  
+{top3_str}  
 **Frames analyzed:** {len(frames)}  
-**Embedding size:** {embs.shape[0]} x {embs.shape[1]}  
+**Objects detected:** {objects_str or 'None'}  
 **Device:** {_device()}"""
 
     progress(1.0)
@@ -202,7 +224,7 @@ def detect_image(image, conf):
     res = yolo(bgr, conf=conf, verbose=False)
 
     out, det, counts = bgr.copy(), 0, {}
-    if res and res[0].boxes is not None:
+    if res and hasattr(res[0], "boxes") and res[0].boxes is not None:
         for b in res[0].boxes:
             x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
             cls_id = int(b.cls[0].item())
@@ -239,15 +261,14 @@ def build_app() -> gr.Blocks:
                 with gr.Row():
                     with gr.Column(scale=1, min_width=240):
                         vid_in = gr.Video(label="Input", sources=["upload"], height=180)
-                        thresh_v = gr.Slider(0, 1, value=0.5, step=0.05, label="Threshold")
-                        conf_v = gr.Slider(0, 1, value=0.25, step=0.05, label="Confidence")
+                        conf_v = gr.Slider(0, 1, value=0.25, step=0.05, label="Detection Confidence")
                         btn_v = gr.Button("Analyze", variant="primary")
                         result_md = gr.Markdown("_Upload a video._")
                     with gr.Column(scale=3):
                         gallery = gr.Gallery(label="Frames", columns=4, object_fit="cover")
                         result_vid = gr.Video(label="Output")
 
-                btn_v.click(analyze_video, [vid_in, thresh_v, conf_v], [gallery, result_md, result_vid])
+                btn_v.click(analyze_video, [vid_in, conf_v], [gallery, result_md, result_vid])
 
             # -- Image --
             with gr.Tab("Image"):

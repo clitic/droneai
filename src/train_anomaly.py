@@ -1,6 +1,6 @@
 """
-Stage 3 -- Train a bidirectional GRU for anomaly detection
-on extracted embeddings (Normal vs Anomaly).
+Stage 3 -- Train a bidirectional GRU for multi-class anomaly detection
+on extracted embeddings (Normal + 13 anomaly types).
 
 Usage:
     uv run python src/train_anomaly.py
@@ -13,8 +13,18 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
+from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, Dataset
+
+# UCF-Crime categories (sorted alphabetically, Normal last as class 0)
+CLASS_NAMES = [
+    "Normal", "Abuse", "Arrest", "Arson", "Assault", "Burglary",
+    "Explosion", "Fighting", "RoadAccidents", "Robbery",
+    "Shooting", "Shoplifting", "Stealing", "Vandalism",
+]
+# Map folder names to class index
+_CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
+_CAT_TO_IDX["NormalVideos"] = 0  # alias
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +33,13 @@ from torch.utils.data import DataLoader, Dataset
 class AnomalyDataset(Dataset):
     def __init__(self, manifest: dict, split: str, seq_len: int = 64) -> None:
         self.seq_len = seq_len
-        self.samples = [(v["npy_path"], v["label"]) for v in manifest.values() if v["split"] == split]
+        self.samples = []
+        for v in manifest.values():
+            if v["split"] == split:
+                cat = v["category"]
+                cls_idx = _CAT_TO_IDX.get(cat, -1)
+                if cls_idx >= 0:
+                    self.samples.append((v["npy_path"], cls_idx))
         if not self.samples:
             raise ValueError(f"No samples for '{split}'. Run extract_embeddings.py first.")
 
@@ -38,7 +54,7 @@ class AnomalyDataset(Dataset):
             feat = feat[np.linspace(0, T - 1, self.seq_len, dtype=int)]
         else:
             feat = np.concatenate([feat, np.zeros((self.seq_len - T, D), dtype=feat.dtype)])
-        return torch.from_numpy(feat).float(), torch.tensor(label, dtype=torch.float32)
+        return torch.from_numpy(feat).float(), torch.tensor(label, dtype=torch.long)
 
 
 # ---------------------------------------------------------------------------
@@ -46,19 +62,20 @@ class AnomalyDataset(Dataset):
 # ---------------------------------------------------------------------------
 class AnomalyGRU(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int = 128, num_layers: int = 2,
-                 dropout: float = 0.3, bidirectional: bool = True) -> None:
+                 dropout: float = 0.3, bidirectional: bool = True,
+                 num_classes: int = 14) -> None:
         super().__init__()
         self.gru = nn.GRU(input_dim, hidden_size, num_layers, batch_first=True,
                           dropout=dropout if num_layers > 1 else 0.0, bidirectional=bidirectional)
         d = hidden_size * (2 if bidirectional else 1)
         self.attn = nn.Sequential(nn.Linear(d, 64), nn.Tanh(), nn.Linear(64, 1))
         self.head = nn.Sequential(nn.LayerNorm(d), nn.Dropout(dropout), nn.Linear(d, 64),
-                                  nn.ReLU(), nn.Dropout(dropout), nn.Linear(64, 1))
+                                  nn.ReLU(), nn.Dropout(dropout), nn.Linear(64, num_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out, _ = self.gru(x)
         w = torch.softmax(self.attn(out), dim=1)
-        return self.head(torch.sum(out * w, dim=1))
+        return self.head(torch.sum(out * w, dim=1))  # (B, num_classes)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +85,7 @@ def train_epoch(model, loader, criterion, optimizer, device):
     model.train()
     total = 0.0
     for x, y in loader:
-        x, y = x.to(device), y.to(device).unsqueeze(1)
+        x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         loss = criterion(model(x), y)
         loss.backward()
@@ -81,20 +98,17 @@ def train_epoch(model, loader, criterion, optimizer, device):
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
-    total, probs, labels = 0.0, [], []
+    total = 0.0
+    all_preds, all_labels = [], []
     for x, y in loader:
-        x, y = x.to(device), y.to(device).unsqueeze(1)
+        x, y = x.to(device), y.to(device)
         logits = model(x)
         total += criterion(logits, y).item() * x.size(0)
-        probs.extend(torch.sigmoid(logits).cpu().numpy().flatten().tolist())
-        labels.extend(y.cpu().numpy().flatten().tolist())
-    preds = [int(p >= 0.5) for p in probs]
-    acc = accuracy_score(labels, preds)
-    try:
-        auc = roc_auc_score(labels, probs)
-    except ValueError:
-        auc = 0.0
-    return total / len(loader.dataset), acc, auc
+        preds = logits.argmax(dim=1).cpu().tolist()
+        all_preds.extend(preds)
+        all_labels.extend(y.cpu().tolist())
+    acc = accuracy_score(all_labels, all_preds)
+    return total / len(loader.dataset), acc, all_preds, all_labels
 
 
 def main() -> None:
@@ -107,56 +121,73 @@ def main() -> None:
         manifest = json.load(f)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_classes = len(CLASS_NAMES)
 
     print("=" * 60)
-    print("  DroneAI -- Stage 3: GRU Anomaly Classifier")
+    print("  DroneAI -- Stage 3: Multi-Class GRU Classifier")
     print("=" * 60)
     print(f"  Device: {device}")
+    print(f"  Classes: {num_classes}")
+    for i, name in enumerate(CLASS_NAMES):
+        print(f"    {i:2d}: {name}")
     print("=" * 60)
 
     train_ds = AnomalyDataset(manifest, "train", seq_len=64)
     test_ds = AnomalyDataset(manifest, "test", seq_len=64)
 
-    n0 = sum(1 for _, l in train_ds.samples if l == 0)
-    n1 = sum(1 for _, l in train_ds.samples if l == 1)
-    print(f"\n  Train: {len(train_ds)} ({n0} normal, {n1} anomaly)")
+    # Count per class
+    train_counts = [0] * num_classes
+    for _, lbl in train_ds.samples:
+        train_counts[lbl] += 1
+
+    print(f"\n  Train: {len(train_ds)} clips")
+    for i, name in enumerate(CLASS_NAMES):
+        if train_counts[i] > 0:
+            print(f"    {name}: {train_counts[i]}")
     print(f"  Test:  {len(test_ds)}")
 
-    pw = torch.tensor([n0 / n1] if n0 and n1 else [1.0], device=device)
+    # Class weights (inverse frequency)
+    total_samples = sum(train_counts)
+    weights = torch.tensor(
+        [total_samples / (num_classes * c) if c > 0 else 0.0 for c in train_counts],
+        dtype=torch.float32, device=device
+    )
+
     train_dl = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
     test_dl = DataLoader(test_ds, batch_size=32, num_workers=4, pin_memory=True)
 
     input_dim = train_ds[0][0].shape[-1]
     print(f"  Embedding dim: {input_dim}\n")
 
-    model = AnomalyGRU(input_dim).to(device)
+    model = AnomalyGRU(input_dim, num_classes=num_classes).to(device)
     print(f"  Params: {sum(p.numel() for p in model.parameters()):,}\n")
 
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+    criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, eta_min=1e-6)
 
-    save_dir = Path("models")
+    save_dir = Path("runs")
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_auc, patience = 0.0, 0
+    best_acc, patience = 0.0, 0
 
     for ep in range(1, 31):
         tl = train_epoch(model, train_dl, criterion, optimizer, device)
-        vl, va, vauc = evaluate(model, test_dl, criterion, device)
+        vl, va, _, _ = evaluate(model, test_dl, criterion, device)
         scheduler.step()
 
         print(f"  Epoch {ep:3d}/30 | Train: {tl:.4f} | Val: {vl:.4f} | "
-              f"Acc: {va:.4f} | AUC: {vauc:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+              f"Acc: {va:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
 
-        if vauc > best_auc:
-            best_auc, patience = vauc, 0
+        if va > best_acc:
+            best_acc, patience = va, 0
             torch.save({
                 "epoch": ep, "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(), "best_auc": best_auc,
+                "optimizer_state_dict": optimizer.state_dict(), "best_acc": best_acc,
                 "input_dim": input_dim, "hidden_size": 128, "num_layers": 2,
                 "dropout": 0.3, "bidirectional": True, "seq_len": 64,
+                "num_classes": num_classes, "class_names": CLASS_NAMES,
             }, save_dir / "gru_best.pt")
-            print(f"           +-- [BEST] AUC: {best_auc:.4f}")
+            print(f"           +-- [BEST] Acc: {best_acc:.4f}")
         else:
             patience += 1
             if patience >= 10:
@@ -167,18 +198,10 @@ def main() -> None:
     print(f"\n{'='*60}\n  Final Evaluation\n{'='*60}")
     ckpt = torch.load(save_dir / "gru_best.pt", map_location=device, weights_only=True)
     model.load_state_dict(ckpt["model_state_dict"])
-    _, fa, fauc = evaluate(model, test_dl, criterion, device)
+    _, fa, all_preds, all_labels = evaluate(model, test_dl, criterion, device)
 
-    model.eval()
-    ap, al = [], []
-    with torch.no_grad():
-        for x, y in test_dl:
-            p = (torch.sigmoid(model(x.to(device))).cpu().numpy().flatten() >= 0.5).astype(int)
-            ap.extend(p.tolist())
-            al.extend(y.numpy().flatten().tolist())
-
-    print(f"\n  Accuracy: {fa:.4f}\n  AUC-ROC:  {fauc:.4f}")
-    print(f"\n{classification_report(al, ap, target_names=['Normal', 'Anomaly'])}")
+    print(f"\n  Accuracy: {fa:.4f}")
+    print(f"\n{classification_report(all_labels, all_preds, target_names=CLASS_NAMES, zero_division=0)}")
     print(f"  Model: {save_dir / 'gru_best.pt'}")
     print("\n>> Done! Launch UI: uv run python src/app.py")
 

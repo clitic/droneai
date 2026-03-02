@@ -20,7 +20,6 @@ runs/
 !datasets/**/*.pt
 
 # Pipeline outputs
-models/
 *.npy
 
 # Gradio
