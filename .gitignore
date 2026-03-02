@@ -10,7 +10,15 @@ wheels/
 .venv
 
 # YOLO
-data/*
-!data/README.md
-runs
+datasets/*
+!datasets/README.md
+runs/
 yolo26*.pt
+
+# Pipeline outputs
+features/
+models/
+*.npy
+
+# Gradio
+flagged/

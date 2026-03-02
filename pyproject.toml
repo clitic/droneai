@@ -1,13 +1,15 @@
 [project]
 name = "droneai"
-version = "0.1.0"
-description = "YOLO26 drone object detection with Gradio web UI"
+version = "0.2.0"
+description = "Drone-as-First-Responder anomaly detection: YOLOv26 + GRU pipeline with Gradio UI"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "gradio>=6.8.0",
+    "numpy>=2.2.0",
     "opencv-python>=4.13.0.92",
     "pyyaml>=6.0.3",
+    "scikit-learn>=1.7.0",
     "torch>=2.10.0",
     "torchvision>=0.25.0",
     "tqdm>=4.67.3",
