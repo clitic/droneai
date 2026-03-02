@@ -98,7 +98,7 @@ def evaluate(model, loader, criterion, device):
 
 
 def main() -> None:
-    mf = Path("features/manifest.json")
+    mf = Path("datasets/ucf-crime-features/manifest.json")
     if not mf.exists():
         print(f"[ERROR] {mf} not found. Run extract_embeddings.py first.")
         sys.exit(1)

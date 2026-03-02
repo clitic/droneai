@@ -26,6 +26,7 @@ def clip_name(filename: str) -> str:
 
 
 def group_frames(category_dir: Path) -> dict[str, list[Path]]:
+    """Group frames by clip name, sorted by frame number."""
     exts = {".png", ".jpg", ".jpeg", ".bmp"}
     clips: dict[str, list[Path]] = defaultdict(list)
     for p in category_dir.iterdir():
@@ -82,7 +83,7 @@ def main() -> None:
     print("=" * 60, flush=True)
 
     model = YOLO(str(model_path))
-    out_dir = Path("features")
+    out_dir = Path("datasets/ucf-crime-features")
     manifest: dict[str, dict] = {}
     total_clips, total_frames = 0, 0
 
