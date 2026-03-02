@@ -32,12 +32,6 @@ def _device():
     return _dev
 
 
-def _find_models():
-    yolo = sorted(str(p) for p in Path("runs").rglob("*.pt") if "weights" in str(p)) if Path("runs").exists() else []
-    gru = sorted(str(p) for p in Path("models").rglob("*.pt")) if Path("models").exists() else []
-    return yolo, gru
-
-
 def _load_yolo(p):
     global _yolo
     _yolo = YOLO(p)
@@ -79,15 +73,36 @@ def _classify(gru, embs, seq_len):
         return torch.sigmoid(gru(torch.from_numpy(feat).float().unsqueeze(0).to(d))).item()
 
 
+# Per-class color palette (BGR) -- 10 distinct colors for VisDrone classes
+_PALETTE = [
+    (0, 255, 255),   # yellow
+    (0, 255, 0),     # green
+    (255, 0, 0),     # blue
+    (0, 165, 255),   # orange
+    (255, 0, 255),   # magenta
+    (255, 255, 0),   # cyan
+    (0, 128, 255),   # dark orange
+    (203, 192, 255), # pink
+    (0, 215, 255),   # gold
+    (180, 105, 255), # hot pink
+]
+
+
+def _class_color(cls_id: int) -> tuple:
+    return _PALETTE[cls_id % len(_PALETTE)]
+
+
 def _draw(frame, res, prob, thresh):
     out = frame.copy()
     if res and res[0].boxes is not None:
         for b in res[0].boxes:
             x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
-            nm = res[0].names.get(int(b.cls[0].item()), "?")
-            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cls_id = int(b.cls[0].item())
+            nm = res[0].names.get(cls_id, "?")
+            col = _class_color(cls_id)
+            cv2.rectangle(out, (x1, y1), (x2, y2), col, 2)
             cv2.putText(out, f"{nm} {b.conf[0].item():.2f}", (x1, max(y1-8, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
     h, w = out.shape[:2]
     bad = prob >= thresh
     ov = out.copy()
@@ -121,12 +136,15 @@ def _read_video(path, max_frames=300):
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
-def analyze_video(video, yolo_p, gru_p, thresh, conf, progress=gr.Progress()):
+def analyze_video(video, thresh, conf, progress=gr.Progress()):
+    yolo_p = "runs/detect/visdrone/weights/best.pt"
+    gru_p = "models/gru_best.pt"
+
     if not video:
         return None, "Upload a video to begin.", None
-    if not yolo_p or not Path(yolo_p).exists():
+    if not Path(yolo_p).exists():
         return None, "YOLO model not found. Run train_detector.py first.", None
-    if not gru_p or not Path(gru_p).exists():
+    if not Path(gru_p).exists():
         return None, "GRU model not found. Run train_anomaly.py first.", None
 
     progress(0.1, desc="Loading models")
@@ -161,22 +179,22 @@ def analyze_video(video, yolo_p, gru_p, thresh, conf, progress=gr.Progress()):
     verdict = "ANOMALY DETECTED" if anom else "NORMAL"
     md = f"""### {verdict}
 
-| Metric | Value |
-|--------|-------|
-| **Probability** | {prob:.4f} ({prob:.1%}) |
-| **Threshold** | {thresh} |
-| **Frames** | {len(frames)} |
-| **Embeddings** | {embs.shape[0]} x {embs.shape[1]} |
-| **Device** | {_device()} |"""
+**Probability:** {prob:.4f} ({prob:.1%})  
+**Threshold:** {thresh}  
+**Frames analyzed:** {len(frames)}  
+**Embedding size:** {embs.shape[0]} x {embs.shape[1]}  
+**Device:** {_device()}"""
 
     progress(1.0)
     return gallery, md, tmp.name
 
 
-def detect_image(image, yolo_p, conf):
+def detect_image(image, conf):
+    yolo_p = "runs/detect/visdrone/weights/best.pt"
+
     if image is None:
         return None, "Upload an image to begin."
-    if not yolo_p or not Path(yolo_p).exists():
+    if not Path(yolo_p).exists():
         return None, "YOLO model not found. Run train_detector.py first."
 
     yolo = _load_yolo(yolo_p)
@@ -187,20 +205,20 @@ def detect_image(image, yolo_p, conf):
     if res and res[0].boxes is not None:
         for b in res[0].boxes:
             x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
-            nm = res[0].names.get(int(b.cls[0].item()), "?")
-            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cls_id = int(b.cls[0].item())
+            nm = res[0].names.get(cls_id, "?")
+            col = _class_color(cls_id)
+            cv2.rectangle(out, (x1, y1), (x2, y2), col, 2)
             cv2.putText(out, f"{nm} {b.conf[0].item():.2f}", (x1, max(y1-8, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
             det += 1
             counts[nm] = counts.get(nm, 0) + 1
 
     cs = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
     md = f"""### {det} object{'s' if det != 1 else ''} detected
 
-| Metric | Value |
-|--------|-------|
-| **Classes** | {cs or 'None'} |
-| **Confidence** | {conf} |"""
+**Classes:** {cs or 'None'}  
+**Confidence threshold:** {conf}"""
 
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB), md
 
@@ -209,56 +227,40 @@ def detect_image(image, yolo_p, conf):
 # App
 # ---------------------------------------------------------------------------
 def build_app() -> gr.Blocks:
-    yolo_list, gru_list = _find_models()
-    dy = yolo_list[0] if yolo_list else "runs/detect/visdrone/weights/best.pt"
-    dg = gru_list[0] if gru_list else "models/gru_best.pt"
 
     with gr.Blocks(title="DroneAI") as app:
 
-        gr.Markdown("# DroneAI\nAnomaly detection for drone surveillance footage")
+        gr.Markdown("## DroneAI")
 
         with gr.Tabs():
 
-            # ── Video Tab ──
-            with gr.Tab("Video Analysis"):
+            # -- Video --
+            with gr.Tab("Video"):
                 with gr.Row():
-                    vid_in = gr.Video(label="Upload Video", sources=["upload"])
-                    gallery = gr.Gallery(label="Detected Frames", columns=4, height=340,
-                                         object_fit="cover", preview=True)
+                    with gr.Column(scale=1, min_width=240):
+                        vid_in = gr.Video(label="Input", sources=["upload"], height=180)
+                        thresh_v = gr.Slider(0, 1, value=0.5, step=0.05, label="Threshold")
+                        conf_v = gr.Slider(0, 1, value=0.25, step=0.05, label="Confidence")
+                        btn_v = gr.Button("Analyze", variant="primary")
+                        result_md = gr.Markdown("_Upload a video._")
+                    with gr.Column(scale=3):
+                        gallery = gr.Gallery(label="Frames", columns=4, object_fit="cover")
+                        result_vid = gr.Video(label="Output")
 
-                with gr.Accordion("Settings", open=False):
-                    with gr.Row():
-                        yolo_v = gr.Textbox(label="YOLO Model", value=dy)
-                        gru_v = gr.Textbox(label="GRU Model", value=dg)
-                    with gr.Row():
-                        thresh_v = gr.Slider(0, 1, value=0.5, step=0.05, label="Anomaly Threshold")
-                        conf_v = gr.Slider(0, 1, value=0.25, step=0.05, label="Detection Confidence")
+                btn_v.click(analyze_video, [vid_in, thresh_v, conf_v], [gallery, result_md, result_vid])
 
-                btn_v = gr.Button("Analyze Video", variant="primary")
-
+            # -- Image --
+            with gr.Tab("Image"):
                 with gr.Row():
-                    result_md = gr.Markdown("_Upload a video and click Analyze._")
-                    result_vid = gr.Video(label="Annotated Output")
+                    with gr.Column(scale=1, min_width=240):
+                        img_in = gr.Image(label="Input", type="numpy")
+                        conf_i = gr.Slider(0, 1, value=0.25, step=0.05, label="Confidence")
+                        btn_i = gr.Button("Detect", variant="primary")
+                        img_md = gr.Markdown("_Upload an image._")
+                    with gr.Column(scale=3):
+                        img_out = gr.Image(label="Result")
 
-                btn_v.click(analyze_video,
-                            [vid_in, yolo_v, gru_v, thresh_v, conf_v],
-                            [gallery, result_md, result_vid])
-
-            # ── Image Tab ──
-            with gr.Tab("Image Detection"):
-                with gr.Row():
-                    img_in = gr.Image(label="Upload Image", type="numpy")
-                    img_out = gr.Image(label="Detection Result")
-
-                with gr.Accordion("Settings", open=False):
-                    with gr.Row():
-                        yolo_i = gr.Textbox(label="YOLO Model", value=dy)
-                        conf_i = gr.Slider(0, 1, value=0.25, step=0.05, label="Detection Confidence")
-
-                btn_i = gr.Button("Detect Objects", variant="primary")
-                img_md = gr.Markdown("_Upload an image and click Detect._")
-
-                btn_i.click(detect_image, [img_in, yolo_i, conf_i], [img_out, img_md])
+                btn_i.click(detect_image, [img_in, conf_i], [img_out, img_md])
 
     return app
 
