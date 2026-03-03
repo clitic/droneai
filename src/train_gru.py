@@ -8,14 +8,15 @@ from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-CLASS_NAMES = [
-    "Normal", "Abuse", "Arrest", "Arson", "Assault", "Burglary",
-    "Explosion", "Fighting", "RoadAccidents", "Robbery",
-    "Shooting", "Shoplifting", "Stealing", "Vandalism",
-]
+CLASS_NAMES = ["Normal", "Violence", "Theft", "Destruction", "Other"]
 
-_CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
-_CAT_TO_IDX["NormalVideos"] = 0
+_CAT_TO_IDX = {
+    "NormalVideos": 0, "Normal": 0,
+    "Abuse": 1, "Arrest": 1, "Assault": 1, "Fighting": 1,
+    "Burglary": 2, "Robbery": 2, "Shoplifting": 2, "Stealing": 2,
+    "Arson": 3, "Explosion": 3, "Shooting": 3,
+    "RoadAccidents": 4, "Vandalism": 4,
+}
 
 
 def scan_features(features_dir: Path) -> dict[str, list[tuple[str, int]]]:
@@ -57,18 +58,21 @@ class AnomalyDataset(Dataset):
 
 
 class AnomalyGRU(nn.Module):
-    def __init__(self, input_dim: int, hidden_size: int = 64, num_layers: int = 2,
-                 dropout: float = 0.5, bidirectional: bool = True,
-                 num_classes: int = 14) -> None:
+    def __init__(self, input_dim: int, hidden_size: int = 128, num_layers: int = 2,
+                 dropout: float = 0.3, bidirectional: bool = True,
+                 num_classes: int = 5) -> None:
         super().__init__()
         self.gru = nn.GRU(input_dim, hidden_size, num_layers, batch_first=True,
                           dropout=dropout if num_layers > 1 else 0.0, bidirectional=bidirectional)
         d = hidden_size * (2 if bidirectional else 1)
-        self.attn = nn.Sequential(nn.Linear(d, 32), nn.Tanh(), nn.Linear(32, 1))
+        self.attn = nn.Sequential(nn.Linear(d, 64), nn.Tanh(), nn.Linear(64, 1))
         self.head = nn.Sequential(
             nn.LayerNorm(d),
             nn.Dropout(dropout),
-            nn.Linear(d, num_classes),
+            nn.Linear(d, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, num_classes),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -140,7 +144,7 @@ def main() -> None:
     model = AnomalyGRU(input_dim, num_classes=num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs, eta_min=1e-6)
 
     save_dir = Path("runs")
@@ -161,8 +165,8 @@ def main() -> None:
             torch.save({
                 "epoch": ep, "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(), "best_acc": best_acc,
-                "input_dim": input_dim, "hidden_size": 64, "num_layers": 2,
-                "dropout": 0.5, "bidirectional": True, "seq_len": 64,
+                "input_dim": input_dim, "hidden_size": 128, "num_layers": 2,
+                "dropout": 0.3, "bidirectional": True, "seq_len": 64,
                 "num_classes": num_classes, "class_names": CLASS_NAMES,
             }, save_dir / "gru_best.pt")
         else:

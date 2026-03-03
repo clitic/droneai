@@ -27,7 +27,7 @@ DroneAI uses a three-stage pipeline. A vision model first learns to detect objec
 
 ```
 Video Frames ──► YOLOv26n Backbone ──► Feature Embeddings ──► Bi-GRU + Attention ──► Class Prediction
-                  (per-frame)             (T × 576)              (temporal)             14 classes
+                  (per-frame)             (T × 576)              (temporal)             5 classes
 ```
 
 ### Stage 1 — Object Detection (`train_yolo.py`)
@@ -48,21 +48,21 @@ Frames are grouped by clip name, loaded in parallel using threaded I/O, and embe
 
 ### Stage 3 — Anomaly Classification (`train_gru.py`)
 
-A 3-layer Bidirectional GRU with learned attention pooling classifies each video clip into one of 14 categories:
+A 2-layer Bidirectional GRU with learned attention pooling classifies each video clip into one of 5 categories (grouped from 14 original UCF-Crime classes):
 
-| Class | Type |
-|-------|------|
-| Normal | No anomaly |
-| Abuse, Arrest, Arson, Assault | Violence |
-| Burglary, Robbery, Shoplifting, Stealing | Theft |
-| Explosion, Fighting, Shooting | Destruction |
-| RoadAccidents, Vandalism | Other |
+| Class | Original Categories |
+|-------|--------------------|
+| Normal | NormalVideos |
+| Violence | Abuse, Arrest, Assault, Fighting |
+| Theft | Burglary, Robbery, Shoplifting, Stealing |
+| Destruction | Arson, Explosion, Shooting |
+| Other | RoadAccidents, Vandalism |
 
 **How it works:**
 
 1. **Temporal encoding** — the GRU reads the embedding sequence (64 sampled frames × 576 dims) bidirectionally, capturing patterns in both forward and reverse time
 2. **Attention pooling** — a learned attention layer weights which frames are most informative, then produces a single summary vector
-3. **Classification head** — LayerNorm → GELU → Linear layers map the attended representation to 14 class logits
+3. **Classification head** — LayerNorm → ReLU → Linear layers map the attended representation to 5 class logits
 
 ## Use Cases
 
