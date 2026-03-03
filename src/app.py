@@ -5,7 +5,7 @@ import torch
 from pathlib import Path
 from ultralytics import YOLO
 
-from train_anomaly import AnomalyGRU
+from train_gru import AnomalyGRU
 
 _yolo: YOLO | None = None
 _gru: AnomalyGRU | None = None
