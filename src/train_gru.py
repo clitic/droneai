@@ -82,12 +82,10 @@ class AnomalyGRU(nn.Module):
         return self.head(torch.sum(out * w, dim=1))
 
 
-def train_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs):
+def train_epoch(model, loader, criterion, optimizer, device):
     model.train()
     total = 0.0
-    pbar = tqdm(loader, desc=f"  Epoch {epoch:3d}/{total_epochs} [train]",
-                bar_format="{l_bar}{bar:20}{r_bar}", leave=False)
-    for x, y in pbar:
+    for x, y in loader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         loss = criterion(model(x), y)
@@ -95,7 +93,6 @@ def train_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         total += loss.item() * x.size(0)
-        pbar.set_postfix(loss=f"{loss.item():.4f}")
     return total / len(loader.dataset)
 
 
@@ -157,11 +154,12 @@ def main() -> None:
 
     epoch_bar = tqdm(range(1, max_epochs + 1), desc="Training", unit="ep")
     for ep in epoch_bar:
-        tl = train_epoch(model, train_dl, criterion, optimizer, device, ep, max_epochs)
+        tl = train_epoch(model, train_dl, criterion, optimizer, device)
         vl, va, _, _ = evaluate(model, test_dl, criterion, device)
         scheduler.step()
 
-        epoch_bar.set_postfix(loss=f"{tl:.4f}", val=f"{vl:.4f}", acc=f"{va:.4f}", best=f"{best_acc:.4f}")
+        marker = " (best)" if va > best_acc else ""
+        epoch_bar.write(f"  ep {ep:3d} | loss {tl:.4f} | val {vl:.4f} | acc {va:.4f}{marker}")
 
         if va > best_acc:
             best_acc, patience = va, 0
