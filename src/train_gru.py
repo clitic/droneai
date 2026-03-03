@@ -149,7 +149,7 @@ def main() -> None:
 
     save_dir = Path("runs")
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc, patience = 0.0, 0
+    best_acc = 0.0
 
     epoch_bar = tqdm(range(1, max_epochs + 1), desc="Training", unit="ep")
     for ep in epoch_bar:
@@ -161,7 +161,7 @@ def main() -> None:
         epoch_bar.write(f"  ep {ep:3d} | loss {tl:.4f} | val {vl:.4f} | acc {va:.4f}{marker}")
 
         if va > best_acc:
-            best_acc, patience = va, 0
+            best_acc = va
             torch.save({
                 "epoch": ep, "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(), "best_acc": best_acc,
@@ -169,11 +169,6 @@ def main() -> None:
                 "dropout": 0.3, "bidirectional": True, "seq_len": 64,
                 "num_classes": num_classes, "class_names": CLASS_NAMES,
             }, save_dir / "gru_best.pt")
-        else:
-            patience += 1
-            if patience >= 20:
-                epoch_bar.close()
-                break
 
     ckpt = torch.load(save_dir / "gru_best.pt", map_location=device, weights_only=True)
     model.load_state_dict(ckpt["model_state_dict"])
