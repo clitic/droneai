@@ -16,3 +16,6 @@ datasets/*
 # YOLO
 runs/
 yolo*.pt
+
+# Package
+droneai-*.zip
