@@ -1,19 +1,10 @@
-"""
-DroneAI -- Gradio WebUI for anomaly detection.
-
-Usage:
-    uv run python src/app.py
-"""
-
 import tempfile
-from pathlib import Path
-
 import cv2
 import gradio as gr
 import numpy as np
 import torch
+from pathlib import Path
 from ultralytics import YOLO
-
 from train_anomaly import AnomalyGRU
 
 # ---------------------------------------------------------------------------
@@ -24,19 +15,16 @@ _gru: AnomalyGRU | None = None
 _gru_cfg: dict | None = None
 _dev: torch.device | None = None
 
-
 def _device():
     global _dev
     if _dev is None:
         _dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return _dev
 
-
 def _load_yolo(p):
     global _yolo
     _yolo = YOLO(p)
     return _yolo
-
 
 def _load_gru(p):
     global _gru, _gru_cfg
@@ -55,7 +43,6 @@ def _load_gru(p):
     _gru.load_state_dict(ckpt["model_state_dict"])
     _gru.eval()
     return _gru, _gru_cfg
-
 
 # ---------------------------------------------------------------------------
 # Processing
@@ -83,7 +70,6 @@ def _classify(gru, embs, cfg):
     all_probs = {class_names[i]: float(probs[i]) for i in range(len(class_names))}
     return pred_name, float(probs[pred_idx]), all_probs
 
-
 # Per-class color palette (BGR) -- 10 distinct colors for VisDrone classes
 _PALETTE = [
     (0, 255, 255),   # yellow
@@ -98,10 +84,8 @@ _PALETTE = [
     (180, 105, 255), # hot pink
 ]
 
-
 def _class_color(cls_id: int) -> tuple:
     return _PALETTE[cls_id % len(_PALETTE)]
-
 
 def _draw(frame, res, pred_name, pred_conf, is_anomaly):
     out = frame.copy()
@@ -126,7 +110,6 @@ def _draw(frame, res, pred_name, pred_conf, is_anomaly):
     cv2.rectangle(out, (12, 44), (w - 12, 49), (100, 100, 100), 1)
     return out
 
-
 def _read_video(path, max_frames=300):
     cap = cv2.VideoCapture(path)
     frames, total = [], int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -141,7 +124,6 @@ def _read_video(path, max_frames=300):
         idx += 1
     cap.release()
     return frames
-
 
 # ---------------------------------------------------------------------------
 # Callbacks
@@ -210,7 +192,6 @@ def analyze_video(video, conf, progress=gr.Progress()):
     progress(1.0)
     return gallery, md, tmp.name
 
-
 def detect_image(image, conf):
     yolo_p = "runs/detect/visdrone/weights/best.pt"
 
@@ -244,19 +225,14 @@ def detect_image(image, conf):
 
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB), md
 
-
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 def build_app() -> gr.Blocks:
-
     with gr.Blocks(title="DroneAI") as app:
-
         gr.Markdown("## DroneAI")
 
         with gr.Tabs():
-
-            # -- Video --
             with gr.Tab("Video"):
                 with gr.Row():
                     with gr.Column(scale=1, min_width=240):
@@ -270,7 +246,6 @@ def build_app() -> gr.Blocks:
 
                 btn_v.click(analyze_video, [vid_in, conf_v], [gallery, result_md, result_vid])
 
-            # -- Image --
             with gr.Tab("Image"):
                 with gr.Row():
                     with gr.Column(scale=1, min_width=240):
@@ -284,7 +259,6 @@ def build_app() -> gr.Blocks:
                 btn_i.click(detect_image, [img_in, conf_i], [img_out, img_md])
 
     return app
-
 
 if __name__ == "__main__":
     build_app().launch(

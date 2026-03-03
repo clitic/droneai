@@ -1,18 +1,9 @@
-"""
-Stage 3 -- Train a bidirectional GRU for multi-class anomaly detection
-on extracted embeddings (Normal + 13 anomaly types).
-
-Usage:
-    uv run python src/train_anomaly.py
-"""
-
 import json
 import sys
-from pathlib import Path
-
 import numpy as np
 import torch
 import torch.nn as nn
+from pathlib import Path
 from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 
@@ -25,7 +16,6 @@ CLASS_NAMES = [
 # Map folder names to class index
 _CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
 _CAT_TO_IDX["NormalVideos"] = 0  # alias
-
 
 # ---------------------------------------------------------------------------
 # Dataset
@@ -56,7 +46,6 @@ class AnomalyDataset(Dataset):
             feat = np.concatenate([feat, np.zeros((self.seq_len - T, D), dtype=feat.dtype)])
         return torch.from_numpy(feat).float(), torch.tensor(label, dtype=torch.long)
 
-
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -77,7 +66,6 @@ class AnomalyGRU(nn.Module):
         w = torch.softmax(self.attn(out), dim=1)
         return self.head(torch.sum(out * w, dim=1))  # (B, num_classes)
 
-
 # ---------------------------------------------------------------------------
 # Train / Eval
 # ---------------------------------------------------------------------------
@@ -94,7 +82,6 @@ def train_epoch(model, loader, criterion, optimizer, device):
         total += loss.item() * x.size(0)
     return total / len(loader.dataset)
 
-
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -109,7 +96,6 @@ def evaluate(model, loader, criterion, device):
         all_labels.extend(y.cpu().tolist())
     acc = accuracy_score(all_labels, all_preds)
     return total / len(loader.dataset), acc, all_preds, all_labels
-
 
 def main() -> None:
     mf = Path("datasets/ucf-crime-features/manifest.json")
@@ -204,7 +190,6 @@ def main() -> None:
     print(f"\n{classification_report(all_labels, all_preds, target_names=CLASS_NAMES, zero_division=0)}")
     print(f"  Model: {save_dir / 'gru_best.pt'}")
     print("\n>> Done! Launch UI: uv run python src/app.py")
-
 
 if __name__ == "__main__":
     main()

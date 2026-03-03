@@ -1,29 +1,19 @@
-"""
-Stage 2 -- Extract YOLO embeddings from UCF-Crime frames.
-
-Usage:
-    uv run python src/extract_embeddings.py
-"""
-
 import json
 import os
 import re
+import cv2
+import numpy as np
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-import cv2
-import numpy as np
 from tqdm import tqdm
 from ultralytics import YOLO
-
 
 def clip_name(filename: str) -> str:
     """'Abuse001_x264_1580.png' -> 'Abuse001_x264'"""
     m = re.match(r"(.+)_(\d+)$", Path(filename).stem)
     return m.group(1) if m else Path(filename).stem
-
 
 def group_frames(category_dir: Path) -> dict[str, list[Path]]:
     """Group frames by clip name, sorted by frame number."""
@@ -36,7 +26,6 @@ def group_frames(category_dir: Path) -> dict[str, list[Path]]:
         clips[k].sort(key=lambda p: int(m.group(1)) if (m := re.search(r"_(\d+)$", p.stem)) else 0)
     return dict(clips)
 
-
 def preload_batch(paths: list[Path]) -> list[np.ndarray]:
     """Load images from disk using threads for faster I/O."""
     def read(p):
@@ -44,7 +33,6 @@ def preload_batch(paths: list[Path]) -> list[np.ndarray]:
         return img if img is not None else np.zeros((64, 64, 3), dtype=np.uint8)
     with ThreadPoolExecutor(max_workers=8) as pool:
         return list(pool.map(read, paths))
-
 
 def embed_clip(model: YOLO, paths: list[Path], batch_size: int = 16) -> np.ndarray:
     """Extract embeddings with threaded pre-loading and large batches."""
@@ -58,7 +46,6 @@ def embed_clip(model: YOLO, paths: list[Path], batch_size: int = 16) -> np.ndarr
             arr = e.cpu().numpy() if hasattr(e, "cpu") else np.array(e)
             embs.append(arr.flatten())
     return np.stack(embs)
-
 
 def main() -> None:
     # embed() requires PyTorch model — ONNX does not support intermediate layer extraction
@@ -143,7 +130,6 @@ def main() -> None:
     print(f"  Manifest: {out_dir / 'manifest.json'}")
     print(f"{'='*60}")
     print("\n>> Next: uv run python src/train_anomaly.py")
-
 
 if __name__ == "__main__":
     main()

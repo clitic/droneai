@@ -1,13 +1,4 @@
-"""
-Stage 1 -- Fine-tune YOLOv26n on VisDrone.
-Auto-resumes from last checkpoint if available.
-
-Usage:
-    uv run python src/train_detector.py
-"""
-
 from pathlib import Path
-
 from ultralytics import YOLO
 
 
