@@ -25,10 +25,7 @@ See [`datasets/README.md`](datasets/README.md) for dataset download instructions
 
 DroneAI uses a three-stage pipeline. A vision model first learns to detect objects from a drone's perspective, its backbone then extracts feature embeddings from surveillance footage, and finally a temporal model analyzes those features across time to classify the type of activity occurring in the scene.
 
-```
-Video Frames ──► YOLOv26n Backbone ──► Feature Embeddings ──► Bi-GRU + Attention ──► Class Prediction
-                  (per-frame)             (T × 576)              (temporal)             5 classes
-```
+![DroneAI Architecture](images/architecture.png)
 
 ### Stage 1 — Object Detection (`train_yolo.py`)
 
