@@ -1,7 +1,7 @@
 [project]
 name = "droneai"
-version = "0.2.0"
-description = "Drone-as-First-Responder anomaly detection: YOLOv26 + GRU pipeline with Gradio UI"
+version = "0.1.0"
+description = "Drone-as-First-Responder anomaly detection"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
