@@ -12,18 +12,7 @@ wheels/
 # Datasets (large, download separately)
 datasets/*
 !datasets/README.md
-!datasets/visdrone/visdrone.yaml
 
 # YOLO
 runs/
-*.pt
-!datasets/**/*.pt
-
-# Pipeline outputs
-*.npy
-
-# Gradio
-flagged/
-
-# Misc
-output/
+yolo*.pt

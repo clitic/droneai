@@ -13,13 +13,11 @@ Fine-tunes YOLOv26n for drone-perspective object detection (`train_yolo.py`).
 
 ```
 datasets/visdrone/
-├── visdrone.yaml                      # Config (tracked in git)
-├── VisDrone2019-DET-train/images/     # 6,471 images
-├── VisDrone2019-DET-val/images/       # 548 images
-└── VisDrone2019-DET-test-dev/images/  # 1,610 images
+├── visdrone.yaml
+├── VisDrone2019-DET-train/images/ 
+├── VisDrone2019-DET-val/images/
+└── VisDrone2019-DET-test-dev/images/
 ```
-
-**10 classes:** pedestrian, people, bicycle, car, van, truck, tricycle, awning-tricycle, bus, motor
 
 ## UCF-Crime
 
@@ -29,7 +27,7 @@ Used by `embed.py` (Stage 2) to generate YOLO embeddings, then by `train_gru.py`
 
 ```
 datasets/ufc-crime/
-├── Train/                  # 1,266,345 frames
+├── Train/
 │   ├── Abuse/
 │   ├── Arrest/
 │   ├── Arson/
@@ -44,10 +42,6 @@ datasets/ufc-crime/
 │   ├── Shoplifting/
 │   ├── Stealing/
 │   └── Vandalism/
-└── Test/                   # 111,308 frames
+└── Test/
     └── (same 14 categories)
 ```
-
-**14 classes:** NormalVideos = class 0, all others are anomaly types.
-
-Frame naming: `<ClipName>_<FrameNumber>.png` (e.g. `Abuse001_x264_10.png`)

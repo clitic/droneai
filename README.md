@@ -1,103 +1,74 @@
-# DroneAI -- Anomaly Detection System
+# DroneAI - Anomaly Detection System
 
 **Drone-as-First-Responder** surveillance system that detects objects in drone footage and classifies anomalous activities using deep learning.
 
----
-
-## Architecture
-
-The system uses a two-stage approach: a vision model extracts spatial features from each frame, then a temporal model analyzes how those features change over time to classify the type of activity.
-
-```
-                    Stage 1                    Stage 2                    Stage 3
-                 (trained once)             (run once)               (trained once)
-                      |                        |                          |
-                      v                        v                          v
-Video Frames --> YOLOv26n Backbone --> Feature Embeddings --> Bi-GRU + Attention --> Class Prediction
-                 (per-frame)            (T, 576)              (temporal)           14 classes
-```
-
-### YOLOv26n -- Object Detector (Stage 1)
-
-- **Model:** YOLOv26n (nano variant, ~2.6M params)
-- **Training data:** [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) -- 6,471 drone-perspective images, 10 object classes (pedestrian, car, bicycle, truck, bus, etc.)
-- **Purpose:** Fine-tuned to detect objects commonly seen from drones. The backbone's penultimate layer produces a 576-dimensional embedding per frame that encodes *what objects are present and where*.
-- **Training:** 50 epochs, 640px images, disk caching, AMP (FP16), cosine LR, auto-resume from checkpoint
-
-### Bi-GRU + Attention -- Anomaly Classifier (Stage 3)
-
-- **Model:** 3-layer Bidirectional GRU with learned attention pooling (~1M params)
-- **Training data:** [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) -- 1,610 clips across 14 categories
-- **Input:** Sequence of YOLO embeddings (64 frames x 576 dims) from a video clip
-- **Output:** One of 14 classes:
-  - `Normal` -- no anomaly
-  - `Abuse`, `Arrest`, `Arson`, `Assault`, `Burglary`, `Explosion`, `Fighting`, `RoadAccidents`, `Robbery`, `Shooting`, `Shoplifting`, `Stealing`, `Vandalism`
-- **How it works:**
-  1. The GRU reads the embedding sequence bidirectionally, capturing temporal patterns in both directions
-  2. An attention layer learns which frames are most important for classification
-  3. A classification head (LayerNorm → GELU → Linear) maps the attended representation to one of 14 classes
-- **Training:** CrossEntropyLoss with label smoothing (0.1) and inverse-frequency class weights, AdamW (lr=3e-4), cosine annealing, early stopping (patience=20), 100 epochs
-
-### Inference Pipeline (Gradio UI)
-
-```
-Upload Video --> Read Frames --> YOLO embed() --> Bi-GRU --> Top-5 Class Probabilities
-Upload Image --> YOLO detect() --> Annotated Image (bounding boxes)
-```
-
----
-
-## Project Structure
-
-```
-droneai/
-├── src/
-│   ├── train_yolo.py   # Stage 1: Fine-tune YOLOv26n on VisDrone
-│   ├── embed.py        # Stage 2: Extract YOLO embeddings from UCF-Crime
-│   ├── train_gru.py    # Stage 3: Train Bi-GRU anomaly classifier
-│   └── app.py          # Gradio WebUI (video + image analysis)
-├── datasets/
-│   ├── visdrone/              # VisDrone2019-DET dataset
-│   ├── ufc-crime/             # UCF-Crime frames (64x64 PNG)
-│   └── ucf-crime-features/    # Generated .npy embeddings
-├── runs/                      # YOLO training runs + GRU checkpoint
-└── pyproject.toml
-```
-
 ## Quick Start
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation) first, then:
+
 ```bash
-# Install
 git clone https://github.com/clitic/droneai && cd droneai
 uv sync
 
 # Run pipeline (in order)
-uv run python src/train_yolo.py   # Stage 1 - auto-resumes if interrupted
-uv run python src/embed.py        # Stage 2
-uv run python src/train_gru.py    # Stage 3
+uv run python src/train_yolo.py
+uv run python src/embed.py
+uv run python src/train_gru.py
 
 # Launch UI
-uv run python src/app.py          # http://localhost:7860
+uv run python src/app.py
 ```
 
-## Pipeline Details
+See [`datasets/README.md`](datasets/README.md) for dataset download instructions.
 
-| Stage | Script | Model | Data | Output |
-|-------|--------|-------|------|--------|
-| 1 | `train_yolo.py` | YOLOv26n | VisDrone (6.4K images) | `runs/detect/visdrone/weights/best.pt` |
-| 2 | `embed.py` | Trained YOLO | UCF-Crime (1.26M frames) | `datasets/ucf-crime-features/*.npy` |
-| 3 | `train_gru.py` | Bi-GRU (14-class) | Extracted embeddings | `runs/gru_best.pt` |
-| UI | `app.py` | Both models | User uploads | Anomaly class + detection |
+## Architecture
 
-## Datasets
+DroneAI uses a three-stage pipeline. A vision model first learns to detect objects from a drone's perspective, its backbone then extracts feature embeddings from surveillance footage, and finally a temporal model analyzes those features across time to classify the type of activity occurring in the scene.
 
-See [`datasets/README.md`](datasets/README.md) for download instructions.
+```
+Video Frames ──► YOLOv26n Backbone ──► Feature Embeddings ──► Bi-GRU + Attention ──► Class Prediction
+                  (per-frame)             (T × 576)              (temporal)             14 classes
+```
 
-| Dataset | Purpose | Size | Classes |
-|---------|---------|------|---------|
-| [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) | Object detection from drones | 8.6K images | 10 (pedestrian, car, ...) |
-| [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) | Anomaly classification | 1.26M frames, 64x64 | 14 (Normal + 13 anomaly types) |
+### Stage 1 — Object Detection (`train_yolo.py`)
 
-## Tech Stack
+A [YOLOv26n](https://docs.ultralytics.com/) nano model (~2.6M parameters) is fine-tuned on the [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset) dataset, which contains 6,471 drone-perspective images across 10 object classes (pedestrian, car, bicycle, van, truck, etc.). This teaches the model to recognize objects commonly seen from aerial viewpoints.
 
-Ultralytics YOLOv26n -- PyTorch 2.10+ -- Gradio 6.8+ -- scikit-learn -- uv
+The fine-tuned model serves two purposes:
+- **Detection** — drawing bounding boxes around objects in the Gradio UI
+- **Feature extraction** — the backbone's penultimate layer produces a 576-dimensional embedding vector per frame, encoding what objects are present and their spatial arrangement
+
+Training uses 50 epochs at 640px with disk caching, AMP (FP16), cosine learning rate schedule, and automatic checkpoint resumption.
+
+### Stage 2 — Embedding Extraction (`embed.py`)
+
+This stage runs the trained YOLO backbone over every frame in the [UCF-Crime](https://www.crcv.ucf.edu/projects/real-world/) dataset (1.26M frames across 14 categories of 64×64 PNG images). For each video clip, it produces a NumPy array of shape `(T, 576)` where `T` is the number of frames and `576` is the embedding dimension.
+
+Frames are grouped by clip name, loaded in parallel using threaded I/O, and embedded in batches of 16 for GPU efficiency. The resulting `.npy` files are saved to `datasets/ucf-crime-features/` preserving the original `Train/Test` and category directory structure.
+
+### Stage 3 — Anomaly Classification (`train_gru.py`)
+
+A 3-layer Bidirectional GRU with learned attention pooling classifies each video clip into one of 14 categories:
+
+| Class | Type |
+|-------|------|
+| Normal | No anomaly |
+| Abuse, Arrest, Arson, Assault | Violence |
+| Burglary, Robbery, Shoplifting, Stealing | Theft |
+| Explosion, Fighting, Shooting | Destruction |
+| RoadAccidents, Vandalism | Other |
+
+**How it works:**
+
+1. **Temporal encoding** — the GRU reads the embedding sequence (64 sampled frames × 576 dims) bidirectionally, capturing patterns in both forward and reverse time
+2. **Attention pooling** — a learned attention layer weights which frames are most informative, then produces a single summary vector
+3. **Classification head** — LayerNorm → GELU → Linear layers map the attended representation to 14 class logits
+
+## Use Cases
+
+- **Law enforcement** — automated surveillance of public spaces, flagging incidents like fights, robberies, or assaults in real time for faster response
+- **Traffic monitoring** — detecting road accidents from drone footage over highways and intersections, enabling quicker dispatch of emergency services
+- **Event security** — scanning large crowds at concerts, rallies, or sports events for signs of violence, arson, or other threats
+- **Retail loss prevention** — identifying shoplifting or stealing behavior in store surveillance feeds
+- **Smart city infrastructure** — continuous monitoring of urban areas for vandalism, burglary, or suspicious activity to improve public safety
+- **Disaster response** — deploying drones over affected areas to detect explosions, fires, or other hazardous situations and prioritize rescue efforts
