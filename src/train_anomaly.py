@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -18,17 +17,29 @@ _CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
 _CAT_TO_IDX["NormalVideos"] = 0
 
 
+def scan_features(features_dir: Path) -> dict[str, list[tuple[str, int]]]:
+    splits: dict[str, list[tuple[str, int]]] = {"train": [], "test": []}
+    for split_name in ["Train", "Test"]:
+        split_dir = features_dir / split_name
+        if not split_dir.exists():
+            continue
+        for cat_dir in sorted(split_dir.iterdir()):
+            if not cat_dir.is_dir():
+                continue
+            cls_idx = _CAT_TO_IDX.get(cat_dir.name, -1)
+            if cls_idx < 0:
+                continue
+            for npy in sorted(cat_dir.glob("*.npy")):
+                splits[split_name.lower()].append((str(npy), cls_idx))
+    return splits
+
+
 class AnomalyDataset(Dataset):
-    def __init__(self, manifest: dict, split: str, seq_len: int = 64) -> None:
+    def __init__(self, samples: list[tuple[str, int]], seq_len: int = 64) -> None:
         self.seq_len = seq_len
-        self.samples = []
-        for v in manifest.values():
-            if v["split"] == split:
-                cls_idx = _CAT_TO_IDX.get(v["category"], -1)
-                if cls_idx >= 0:
-                    self.samples.append((v["npy_path"], cls_idx))
+        self.samples = samples
         if not self.samples:
-            raise ValueError(f"No samples for '{split}'. Run extract_embeddings.py first.")
+            raise ValueError("No samples found. Run extract_embeddings.py first.")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -92,13 +103,12 @@ def evaluate(model, loader, criterion, device):
 
 
 def main() -> None:
-    mf = Path("datasets/ucf-crime-features/manifest.json")
-    if not mf.exists():
-        print(f"[ERROR] {mf} not found. Run extract_embeddings.py first.")
+    features_dir = Path("datasets/ucf-crime-features")
+    if not features_dir.exists():
+        print(f"[ERROR] {features_dir} not found. Run extract_embeddings.py first.")
         sys.exit(1)
 
-    with open(mf) as f:
-        manifest = json.load(f)
+    splits = scan_features(features_dir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes = len(CLASS_NAMES)
@@ -112,8 +122,8 @@ def main() -> None:
         print(f"    {i:2d}: {name}")
     print("=" * 60)
 
-    train_ds = AnomalyDataset(manifest, "train", seq_len=64)
-    test_ds = AnomalyDataset(manifest, "test", seq_len=64)
+    train_ds = AnomalyDataset(splits["train"], seq_len=64)
+    test_ds = AnomalyDataset(splits["test"], seq_len=64)
 
     train_counts = [0] * num_classes
     for _, lbl in train_ds.samples:

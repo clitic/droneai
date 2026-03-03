@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import sys
@@ -69,7 +68,6 @@ def main() -> None:
 
     model = YOLO(str(model_path))
     out_dir = Path("datasets/ucf-crime-features")
-    manifest: dict[str, dict] = {}
     total_clips, total_frames = 0, 0
 
     for split in ["Train", "Test"]:
@@ -82,46 +80,31 @@ def main() -> None:
 
         all_clips = []
         for cat in categories:
-            is_normal = cat.name == "NormalVideos"
             for name, paths in group_frames(cat).items():
-                all_clips.append((cat.name, 0 if is_normal else 1,
-                                  "Normal" if is_normal else "Anomaly", name, paths))
+                all_clips.append((cat.name, name, paths))
 
         if not all_clips:
             continue
 
-        total_clip_frames = sum(len(c[4]) for c in all_clips)
+        total_clip_frames = sum(len(c[2]) for c in all_clips)
         print(f"\n  {split}: {len(all_clips)} clips, {total_clip_frames} frames", flush=True)
 
         pbar = tqdm(total=total_clip_frames, desc=f"  {split}", unit="fr",
                     bar_format="{l_bar}{bar:30}{r_bar}", leave=True)
 
-        for category, label, label_str, name, paths in all_clips:
+        for category, name, paths in all_clips:
             (out_dir / split / category).mkdir(parents=True, exist_ok=True)
             features = embed_clip(model, paths)
-            npy = out_dir / split / category / f"{name}.npy"
-            np.save(str(npy), features)
-
-            manifest[f"{split}/{category}/{name}"] = {
-                "npy_path": str(npy), "label": label, "label_str": label_str,
-                "category": category, "split": split.lower(),
-                "num_frames": features.shape[0], "embedding_dim": features.shape[1],
-            }
+            np.save(str(out_dir / split / category / f"{name}.npy"), features)
             total_clips += 1
             total_frames += features.shape[0]
             pbar.update(len(paths))
 
         pbar.close()
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "manifest.json", "w") as f:
-        json.dump(manifest, f, indent=2)
-
     print(f"\n{'='*60}")
     print(f"  [OK] Done! {total_clips} clips, {total_frames} frames")
-    if total_clips:
-        print(f"  Embedding dim: {next(iter(manifest.values()))['embedding_dim']}")
-    print(f"  Manifest: {out_dir / 'manifest.json'}")
+    print(f"  Output: {out_dir}")
     print(f"{'='*60}")
     print("\n>> Next: uv run python src/train_anomaly.py")
 
