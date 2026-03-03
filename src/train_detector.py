@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from ultralytics import YOLO
 
 
@@ -7,7 +8,6 @@ def main() -> None:
     if not data.exists():
         raise FileNotFoundError(f"Dataset config not found: {data}")
 
-    # Auto-resume from last checkpoint if previous run exists
     last = Path("runs/detect/visdrone/weights/last.pt")
     if last.exists():
         model_path, resume = str(last), True
@@ -33,13 +33,11 @@ def main() -> None:
         name="visdrone",
         exist_ok=True,
         resume=resume,
-        # -- Speed optimizations --
-        cache="disk",           # cache images to disk for faster loading
-        rect=False,             # rectangular training (can hurt mAP on small objects)
-        close_mosaic=10,        # disable mosaic in last 10 epochs
-        amp=True,               # automatic mixed precision (FP16)
-        save_period=-1,         # only save best + last (skip periodic saves)
-        # -- Learning rate --
+        cache="disk",
+        rect=False,
+        close_mosaic=10,
+        amp=True,
+        save_period=-1,
         lr0=0.01,
         lrf=0.01,
         momentum=0.937,
@@ -47,7 +45,6 @@ def main() -> None:
         warmup_epochs=3.0,
         cos_lr=True,
         patience=20,
-        # -- Augmentation --
         augment=True,
         hsv_h=0.015,
         hsv_s=0.7,

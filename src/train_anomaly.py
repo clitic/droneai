@@ -1,33 +1,30 @@
 import json
 import sys
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
-from pathlib import Path
 from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 
-# UCF-Crime categories (sorted alphabetically, Normal last as class 0)
 CLASS_NAMES = [
     "Normal", "Abuse", "Arrest", "Arson", "Assault", "Burglary",
     "Explosion", "Fighting", "RoadAccidents", "Robbery",
     "Shooting", "Shoplifting", "Stealing", "Vandalism",
 ]
-# Map folder names to class index
-_CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
-_CAT_TO_IDX["NormalVideos"] = 0  # alias
 
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
+_CAT_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES)}
+_CAT_TO_IDX["NormalVideos"] = 0
+
+
 class AnomalyDataset(Dataset):
     def __init__(self, manifest: dict, split: str, seq_len: int = 64) -> None:
         self.seq_len = seq_len
         self.samples = []
         for v in manifest.values():
             if v["split"] == split:
-                cat = v["category"]
-                cls_idx = _CAT_TO_IDX.get(cat, -1)
+                cls_idx = _CAT_TO_IDX.get(v["category"], -1)
                 if cls_idx >= 0:
                     self.samples.append((v["npy_path"], cls_idx))
         if not self.samples:
@@ -46,9 +43,7 @@ class AnomalyDataset(Dataset):
             feat = np.concatenate([feat, np.zeros((self.seq_len - T, D), dtype=feat.dtype)])
         return torch.from_numpy(feat).float(), torch.tensor(label, dtype=torch.long)
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
+
 class AnomalyGRU(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int = 128, num_layers: int = 2,
                  dropout: float = 0.3, bidirectional: bool = True,
@@ -64,11 +59,9 @@ class AnomalyGRU(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out, _ = self.gru(x)
         w = torch.softmax(self.attn(out), dim=1)
-        return self.head(torch.sum(out * w, dim=1))  # (B, num_classes)
+        return self.head(torch.sum(out * w, dim=1))
 
-# ---------------------------------------------------------------------------
-# Train / Eval
-# ---------------------------------------------------------------------------
+
 def train_epoch(model, loader, criterion, optimizer, device):
     model.train()
     total = 0.0
@@ -82,6 +75,7 @@ def train_epoch(model, loader, criterion, optimizer, device):
         total += loss.item() * x.size(0)
     return total / len(loader.dataset)
 
+
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -91,11 +85,11 @@ def evaluate(model, loader, criterion, device):
         x, y = x.to(device), y.to(device)
         logits = model(x)
         total += criterion(logits, y).item() * x.size(0)
-        preds = logits.argmax(dim=1).cpu().tolist()
-        all_preds.extend(preds)
+        all_preds.extend(logits.argmax(dim=1).cpu().tolist())
         all_labels.extend(y.cpu().tolist())
     acc = accuracy_score(all_labels, all_preds)
     return total / len(loader.dataset), acc, all_preds, all_labels
+
 
 def main() -> None:
     mf = Path("datasets/ucf-crime-features/manifest.json")
@@ -121,7 +115,6 @@ def main() -> None:
     train_ds = AnomalyDataset(manifest, "train", seq_len=64)
     test_ds = AnomalyDataset(manifest, "test", seq_len=64)
 
-    # Count per class
     train_counts = [0] * num_classes
     for _, lbl in train_ds.samples:
         train_counts[lbl] += 1
@@ -132,7 +125,6 @@ def main() -> None:
             print(f"    {name}: {train_counts[i]}")
     print(f"  Test:  {len(test_ds)}")
 
-    # Class weights (inverse frequency)
     total_samples = sum(train_counts)
     weights = torch.tensor(
         [total_samples / (num_classes * c) if c > 0 else 0.0 for c in train_counts],
@@ -180,7 +172,6 @@ def main() -> None:
                 print(f"\n  [STOP] Early stopping at epoch {ep}")
                 break
 
-    # Final eval
     print(f"\n{'='*60}\n  Final Evaluation\n{'='*60}")
     ckpt = torch.load(save_dir / "gru_best.pt", map_location=device, weights_only=True)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -190,6 +181,7 @@ def main() -> None:
     print(f"\n{classification_report(all_labels, all_preds, target_names=CLASS_NAMES, zero_division=0)}")
     print(f"  Model: {save_dir / 'gru_best.pt'}")
     print("\n>> Done! Launch UI: uv run python src/app.py")
+
 
 if __name__ == "__main__":
     main()

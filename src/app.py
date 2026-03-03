@@ -1,19 +1,17 @@
-import tempfile
 import cv2
 import gradio as gr
 import numpy as np
 import torch
 from pathlib import Path
 from ultralytics import YOLO
+
 from train_anomaly import AnomalyGRU
 
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
 _yolo: YOLO | None = None
 _gru: AnomalyGRU | None = None
 _gru_cfg: dict | None = None
 _dev: torch.device | None = None
+
 
 def _device():
     global _dev
@@ -21,10 +19,12 @@ def _device():
         _dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return _dev
 
+
 def _load_yolo(p):
     global _yolo
     _yolo = YOLO(p)
     return _yolo
+
 
 def _load_gru(p):
     global _gru, _gru_cfg
@@ -44,9 +44,7 @@ def _load_gru(p):
     _gru.eval()
     return _gru, _gru_cfg
 
-# ---------------------------------------------------------------------------
-# Processing
-# ---------------------------------------------------------------------------
+
 def _embed(yolo, frames, bs=16):
     embs = []
     for i in range(0, len(frames), bs):
@@ -56,7 +54,6 @@ def _embed(yolo, frames, bs=16):
 
 
 def _classify(gru, embs, cfg):
-    """Returns (class_name, confidence, all_probs_dict)."""
     d = _device()
     seq_len = cfg["seq_len"]
     class_names = cfg["class_names"]
@@ -70,45 +67,6 @@ def _classify(gru, embs, cfg):
     all_probs = {class_names[i]: float(probs[i]) for i in range(len(class_names))}
     return pred_name, float(probs[pred_idx]), all_probs
 
-# Per-class color palette (BGR) -- 10 distinct colors for VisDrone classes
-_PALETTE = [
-    (0, 255, 255),   # yellow
-    (0, 255, 0),     # green
-    (255, 0, 0),     # blue
-    (0, 165, 255),   # orange
-    (255, 0, 255),   # magenta
-    (255, 255, 0),   # cyan
-    (0, 128, 255),   # dark orange
-    (203, 192, 255), # pink
-    (0, 215, 255),   # gold
-    (180, 105, 255), # hot pink
-]
-
-def _class_color(cls_id: int) -> tuple:
-    return _PALETTE[cls_id % len(_PALETTE)]
-
-def _draw(frame, res, pred_name, pred_conf, is_anomaly):
-    out = frame.copy()
-    if res and hasattr(res[0], "boxes") and res[0].boxes is not None:
-        for b in res[0].boxes:
-            x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
-            cls_id = int(b.cls[0].item())
-            nm = res[0].names.get(cls_id, "?")
-            col = _class_color(cls_id)
-            cv2.rectangle(out, (x1, y1), (x2, y2), col, 2)
-            cv2.putText(out, f"{nm} {b.conf[0].item():.2f}", (x1, max(y1-8, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
-    h, w = out.shape[:2]
-    ov = out.copy()
-    cv2.rectangle(ov, (0, 0), (w, 52), (0, 0, 0), -1)
-    out = cv2.addWeighted(ov, 0.8, out, 0.2, 0, dst=out)
-    color = (0, 0, 255) if is_anomaly else (0, 200, 0)
-    label = f"{pred_name}  {pred_conf:.1%}"
-    cv2.putText(out, label, (12, 36), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2, cv2.LINE_AA)
-    bw = int((w - 24) * pred_conf)
-    cv2.rectangle(out, (12, 44), (12 + bw, 49), color, -1)
-    cv2.rectangle(out, (12, 44), (w - 12, 49), (100, 100, 100), 1)
-    return out
 
 def _read_video(path, max_frames=300):
     cap = cv2.VideoCapture(path)
@@ -125,19 +83,17 @@ def _read_video(path, max_frames=300):
     cap.release()
     return frames
 
-# ---------------------------------------------------------------------------
-# Callbacks
-# ---------------------------------------------------------------------------
+
 def analyze_video(video, conf, progress=gr.Progress()):
     yolo_p = "runs/detect/visdrone/weights/best.pt"
     gru_p = "runs/gru_best.pt"
 
     if not video:
-        return None, "Upload a video to begin.", None
+        return None
     if not Path(yolo_p).exists():
-        return None, "YOLO model not found. Run train_detector.py first.", None
+        return None
     if not Path(gru_p).exists():
-        return None, "GRU model not found. Run train_anomaly.py first.", None
+        return None
 
     progress(0.1, desc="Loading models")
     yolo = _load_yolo(yolo_p)
@@ -146,119 +102,66 @@ def analyze_video(video, conf, progress=gr.Progress()):
     progress(0.2, desc="Reading video")
     frames = _read_video(video, 200)
     if not frames:
-        return None, "Could not read frames from video.", None
+        return None
 
     progress(0.4, desc=f"Embedding {len(frames)} frames")
     embs = _embed(yolo, frames)
 
     progress(0.7, desc="Classifying")
     pred_name, pred_conf, all_probs = _classify(gru, embs, cfg)
-    is_anomaly = pred_name != "Normal"
 
-    progress(0.8, desc="Annotating")
-    idxs = np.linspace(0, len(frames)-1, min(8, len(frames)), dtype=int)
-    gallery = []
-    all_counts: dict[str, int] = {}
-    for i in idxs:
-        det_res = yolo(frames[i], conf=conf, verbose=False)
-        gallery.append(cv2.cvtColor(_draw(frames[i], det_res, pred_name, pred_conf, is_anomaly), cv2.COLOR_BGR2RGB))
-        if det_res and hasattr(det_res[0], "boxes") and det_res[0].boxes is not None:
-            for b in det_res[0].boxes:
-                nm = det_res[0].names.get(int(b.cls[0].item()), "?")
-                all_counts[nm] = all_counts.get(nm, 0) + 1
-
-    progress(0.9, desc="Encoding video")
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    h, w = frames[0].shape[:2]
-    wr = cv2.VideoWriter(tmp.name, cv2.VideoWriter.fourcc(*"mp4v"), 24, (w, h))
-    for f in frames:
-        wr.write(_draw(f, yolo(f, conf=conf, verbose=False), pred_name, pred_conf, is_anomaly))
-    wr.release()
-
-    objects_str = ", ".join(f"{k}: {v}" for k, v in sorted(all_counts.items(), key=lambda x: -x[1]))
-    top3 = sorted(all_probs.items(), key=lambda x: -x[1])[:3]
-    top3_str = "  \n".join(f"  {name}: {p:.1%}" for name, p in top3)
-
-    verdict = f"ANOMALY: {pred_name}" if is_anomaly else "NORMAL"
-    md = f"""### {verdict}
-
-**Prediction:** {pred_name} ({pred_conf:.1%})  
-**Top predictions:**  
-{top3_str}  
-**Frames analyzed:** {len(frames)}  
-**Objects detected:** {objects_str or 'None'}  
-**Device:** {_device()}"""
+    top5 = sorted(all_probs.items(), key=lambda x: -x[1])[:5]
+    bar_chart = {name: float(prob) for name, prob in top5}
 
     progress(1.0)
-    return gallery, md, tmp.name
+    return bar_chart
+
 
 def detect_image(image, conf):
     yolo_p = "runs/detect/visdrone/weights/best.pt"
 
     if image is None:
-        return None, "Upload an image to begin."
+        return None
     if not Path(yolo_p).exists():
-        return None, "YOLO model not found. Run train_detector.py first."
+        return None
 
     yolo = _load_yolo(yolo_p)
-    bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    res = yolo(bgr, conf=conf, verbose=False)
+    res = yolo(image, conf=conf, verbose=False)
 
-    out, det, counts = bgr.copy(), 0, {}
-    if res and hasattr(res[0], "boxes") and res[0].boxes is not None:
-        for b in res[0].boxes:
-            x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
-            cls_id = int(b.cls[0].item())
-            nm = res[0].names.get(cls_id, "?")
-            col = _class_color(cls_id)
-            cv2.rectangle(out, (x1, y1), (x2, y2), col, 2)
-            cv2.putText(out, f"{nm} {b.conf[0].item():.2f}", (x1, max(y1-8, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
-            det += 1
-            counts[nm] = counts.get(nm, 0) + 1
+    if res and hasattr(res[0], "plot"):
+        return res[0].plot()
+    return image
 
-    cs = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
-    md = f"""### {det} object{'s' if det != 1 else ''} detected
 
-**Classes:** {cs or 'None'}  
-**Confidence threshold:** {conf}"""
-
-    return cv2.cvtColor(out, cv2.COLOR_BGR2RGB), md
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="DroneAI") as app:
         gr.Markdown("## DroneAI")
 
         with gr.Tabs():
             with gr.Tab("Video"):
-                with gr.Row():
-                    with gr.Column(scale=1, min_width=240):
-                        vid_in = gr.Video(label="Input", sources=["upload"], height=180)
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=1):
+                        vid_in = gr.Video(label="Input", sources=["upload"])
                         conf_v = gr.Slider(0, 1, value=0.25, step=0.05, label="Detection Confidence")
                         btn_v = gr.Button("Analyze", variant="primary")
-                        result_md = gr.Markdown("_Upload a video._")
-                    with gr.Column(scale=3):
-                        gallery = gr.Gallery(label="Frames", columns=4, object_fit="cover")
-                        result_vid = gr.Video(label="Output")
+                    with gr.Column(scale=1):
+                        bar_chart = gr.Label(label="Class Probabilities", num_top_classes=5)
 
-                btn_v.click(analyze_video, [vid_in, conf_v], [gallery, result_md, result_vid])
+                btn_v.click(analyze_video, [vid_in, conf_v], [bar_chart])
 
             with gr.Tab("Image"):
-                with gr.Row():
-                    with gr.Column(scale=1, min_width=240):
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=1):
                         img_in = gr.Image(label="Input", type="numpy")
-                        conf_i = gr.Slider(0, 1, value=0.25, step=0.05, label="Confidence")
+                        conf_i = gr.Slider(0, 1, value=0.25, step=0.05, label="Detection Confidence")
                         btn_i = gr.Button("Detect", variant="primary")
-                        img_md = gr.Markdown("_Upload an image._")
-                    with gr.Column(scale=3):
+                    with gr.Column(scale=1):
                         img_out = gr.Image(label="Result")
 
-                btn_i.click(detect_image, [img_in, conf_i], [img_out, img_md])
+                btn_i.click(detect_image, [img_in, conf_i], [img_out])
 
     return app
+
 
 if __name__ == "__main__":
     build_app().launch(
