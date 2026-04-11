@@ -11,12 +11,12 @@ git clone https://github.com/clitic/droneai && cd droneai
 uv sync
 
 # Run pipeline (in order)
-uv run python src/train_yolo.py
-uv run python src/embed.py
-uv run python src/train_gru.py
+uv run src/train_yolo.py
+uv run src/embed.py
+uv run src/train_gru.py
 
 # Launch UI
-uv run python src/app.py
+uv run src/app.py
 ```
 
 See [`datasets/README.md`](datasets/README.md) for dataset download instructions.

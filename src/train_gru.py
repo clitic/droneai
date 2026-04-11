@@ -8,14 +8,33 @@ from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-CLASS_NAMES = ["Normal", "Violence", "Theft", "Destruction", "Other"]
+# ---------------------------------------------------------------------------
+# Grouped classes: 14 original → 5 broader categories
+# ---------------------------------------------------------------------------
+CLASS_NAMES = [
+    "Normal",       # 0: NormalVideos
+    "Violence",     # 1: Abuse, Arrest, Assault, Fighting
+    "Theft",        # 2: Burglary, Robbery, Shoplifting, Stealing
+    "Destruction",  # 3: Arson, Explosion, Shooting
+    "Other",        # 4: RoadAccidents, Vandalism
+]
 
-_CAT_TO_IDX = {
-    "NormalVideos": 0, "Normal": 0,
-    "Abuse": 1, "Arrest": 1, "Assault": 1, "Fighting": 1,
-    "Burglary": 2, "Robbery": 2, "Shoplifting": 2, "Stealing": 2,
-    "Arson": 3, "Explosion": 3, "Shooting": 3,
-    "RoadAccidents": 4, "Vandalism": 4,
+_ORIGINAL_TO_GROUP = {
+    "Normal":         0,
+    "NormalVideos":   0,
+    "Abuse":          1,
+    "Arrest":         1,
+    "Assault":        1,
+    "Fighting":       1,
+    "Burglary":       2,
+    "Robbery":        2,
+    "Shoplifting":    2,
+    "Stealing":       2,
+    "Arson":          3,
+    "Explosion":      3,
+    "Shooting":       3,
+    "RoadAccidents":  4,
+    "Vandalism":      4,
 }
 
 
@@ -28,7 +47,7 @@ def scan_features(features_dir: Path) -> dict[str, list[tuple[str, int]]]:
         for cat_dir in sorted(split_dir.iterdir()):
             if not cat_dir.is_dir():
                 continue
-            cls_idx = _CAT_TO_IDX.get(cat_dir.name, -1)
+            cls_idx = _ORIGINAL_TO_GROUP.get(cat_dir.name, -1)
             if cls_idx < 0:
                 continue
             for npy in sorted(cat_dir.glob("*.npy")):
@@ -66,14 +85,8 @@ class AnomalyGRU(nn.Module):
                           dropout=dropout if num_layers > 1 else 0.0, bidirectional=bidirectional)
         d = hidden_size * (2 if bidirectional else 1)
         self.attn = nn.Sequential(nn.Linear(d, 64), nn.Tanh(), nn.Linear(64, 1))
-        self.head = nn.Sequential(
-            nn.LayerNorm(d),
-            nn.Dropout(dropout),
-            nn.Linear(d, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, num_classes),
-        )
+        self.head = nn.Sequential(nn.LayerNorm(d), nn.Dropout(dropout), nn.Linear(d, 64),
+                                  nn.ReLU(), nn.Dropout(dropout), nn.Linear(64, num_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out, _ = self.gru(x)
@@ -111,6 +124,7 @@ def evaluate(model, loader, criterion, device):
 
 
 def main() -> None:
+    epochs = 50
     features_dir = Path("datasets/ucf-crime-features")
     if not features_dir.exists():
         print(f"[ERROR] {features_dir} not found. Run embed.py first.")
@@ -120,9 +134,6 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes = len(CLASS_NAMES)
-    max_epochs = 100
-
-
 
     train_ds = AnomalyDataset(splits["train"], seq_len=64)
     test_ds = AnomalyDataset(splits["test"], seq_len=64)
@@ -137,30 +148,28 @@ def main() -> None:
         dtype=torch.float32, device=device
     )
 
-    train_dl = DataLoader(train_ds, batch_size=64, shuffle=True, num_workers=4, pin_memory=True)
-    test_dl = DataLoader(test_ds, batch_size=64, num_workers=4, pin_memory=True)
+    train_dl = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
+    test_dl = DataLoader(test_ds, batch_size=32, num_workers=4, pin_memory=True)
 
     input_dim = train_ds[0][0].shape[-1]
     model = AnomalyGRU(input_dim, num_classes=num_classes).to(device)
 
-    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs, eta_min=1e-6)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
     save_dir = Path("runs")
     save_dir.mkdir(parents=True, exist_ok=True)
     best_acc = 0.0
 
-    epoch_bar = tqdm(range(1, max_epochs + 1), desc="Training", unit="ep")
-    for ep in epoch_bar:
+    pbar = tqdm(range(1, epochs + 1), desc="Training", unit="ep", ncols=120)
+    for ep in pbar:
         tl = train_epoch(model, train_dl, criterion, optimizer, device)
         vl, va, _, _ = evaluate(model, test_dl, criterion, device)
         scheduler.step()
 
-        marker = " (best)" if va > best_acc else ""
-        epoch_bar.write(f"  ep {ep:3d} | loss {tl:.4f} | val {vl:.4f} | acc {va:.4f}{marker}")
-
-        if va > best_acc:
+        is_best = va > best_acc
+        if is_best:
             best_acc = va
             torch.save({
                 "epoch": ep, "model_state_dict": model.state_dict(),
@@ -170,10 +179,17 @@ def main() -> None:
                 "num_classes": num_classes, "class_names": CLASS_NAMES,
             }, save_dir / "gru_best.pt")
 
+        best_tag = " [BEST]" if is_best else ""
+        tqdm.write(
+            f"  Epoch {ep:3d}/{epochs} | TL={tl:.4f} VL={vl:.4f} "
+            f"Acc={va:.4f} LR={optimizer.param_groups[0]['lr']:.1e}{best_tag}"
+        )
+
     ckpt = torch.load(save_dir / "gru_best.pt", map_location=device, weights_only=True)
     model.load_state_dict(ckpt["model_state_dict"])
     _, fa, all_preds, all_labels = evaluate(model, test_dl, criterion, device)
-    print(f"\n{classification_report(all_labels, all_preds, target_names=CLASS_NAMES, zero_division=0)}")
+    print(f"\n  Best Accuracy: {fa:.4f}")
+    print(classification_report(all_labels, all_preds, target_names=CLASS_NAMES, zero_division=0))
 
 
 if __name__ == "__main__":
